@@ -240,9 +240,7 @@ export const FieldMapPage: React.FC = () => {
               Operating Mode: <strong className="uppercase text-text-main">{mode}</strong> •
               Sub-step: <strong className="text-text-main">{snapshot.subStep}</strong> •
               Encoder: <strong className="tabular-nums text-text-main">
-                {typeof telemetry?.enc === 'object' && telemetry.enc !== null
-                  ? `${telemetry.enc.l} / ${telemetry.enc.r}`
-                  : (telemetry?.enc ?? 0)} ticks
+                {telemetry?.enc ? `${telemetry.enc.l} / ${telemetry.enc.r}` : '0 / 0'} ticks
               </strong>
             </p>
           </div>

@@ -32,7 +32,7 @@ export const Sidebar: React.FC = () => {
     { to: '/manual', label: 'Manual Drive', icon: Gamepad2 },
     { to: '/camera', label: 'Camera & Vision', icon: Camera },
     { to: '/mission', label: 'Mission Planner', icon: Target },
-    { to: '/field-map', label: 'Field Map', icon: Map },
+    { to: '/field-map', label: 'Greenhouse Map', icon: Map },
     { to: '/results', label: 'Scan Results', icon: CheckSquare },
     { to: '/history', label: 'History & Runs', icon: History },
     { to: '/alerts', label: 'Alerts', icon: Bell, badge: unackAlertsCount },

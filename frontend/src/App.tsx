@@ -8,6 +8,7 @@ import { ManualPage } from './pages/ManualPage';
 import { CameraPage } from './pages/CameraPage';
 import { MissionPage } from './pages/MissionPage';
 import { FieldMapPage } from './pages/FieldMapPage';
+import { PlantDetailPage } from './pages/PlantDetailPage';
 import { ResultsPage } from './pages/ResultsPage';
 import { HistoryPage } from './pages/HistoryPage';
 import { AlertsPage } from './pages/AlertsPage';
@@ -29,6 +30,8 @@ export function App() {
             <Route path="camera" element={<CameraPage />} />
             <Route path="mission" element={<MissionPage />} />
             <Route path="field-map" element={<FieldMapPage />} />
+            <Route path="field-map/:id" element={<PlantDetailPage />} />
+            <Route path="plants/:id" element={<PlantDetailPage />} />
             <Route path="results" element={<ResultsPage />} />
             <Route path="history" element={<HistoryPage />} />
             <Route path="alerts" element={<AlertsPage />} />

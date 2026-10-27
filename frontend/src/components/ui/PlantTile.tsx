@@ -8,6 +8,7 @@ import {
   Sparkles,
   HelpCircle as QuestionIcon,
   SearchX,
+  Navigation,
 } from 'lucide-react';
 import { Card } from './Card';
 
@@ -30,6 +31,7 @@ export interface PlantTileProps {
   moisture?: number;
   confidence?: number;
   selected?: boolean;
+  isRoverHere?: boolean;
   onClick?: () => void;
   className?: string;
 }
@@ -43,6 +45,7 @@ export const PlantTile: React.FC<PlantTileProps> = ({
   moisture,
   confidence,
   selected = false,
+  isRoverHere = false,
   onClick,
   className = '',
 }) => {
@@ -121,6 +124,14 @@ export const PlantTile: React.FC<PlantTileProps> = ({
       } ${className}`}
       padding="md"
     >
+      {/* Rover Location Marker */}
+      {isRoverHere && (
+        <div className="mb-2.5 flex items-center justify-center gap-1.5 py-1 px-2.5 rounded-lg bg-primary text-surface font-black text-xs uppercase tracking-wider shadow-sm animate-pulse">
+          <Navigation className="w-3.5 h-3.5 fill-current" />
+          <span>Rover at Plant</span>
+        </div>
+      )}
+
       {/* Header: Plant ID, Row/Col, Plant Type */}
       <div className="flex items-center justify-between gap-2 mb-2">
         <div className="flex items-center gap-2">

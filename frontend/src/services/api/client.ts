@@ -80,6 +80,62 @@ class ApiClient {
     return response.json();
   }
 
+  async captureDataset(params: {
+    plant: string;
+    label_class: string;
+    plant_id: string;
+    lighting: string;
+    distance_cm: number;
+    part: string;
+  }): Promise<{ ok: boolean; filename: string; relative_path: string; saved_path: string }> {
+    const formData = new FormData();
+    formData.append('plant', params.plant);
+    formData.append('label_class', params.label_class);
+    formData.append('plant_id', params.plant_id);
+    formData.append('lighting', params.lighting);
+    formData.append('distance_cm', String(params.distance_cm));
+    formData.append('part', params.part);
+
+    const url = `${this.baseUrl}/api/dataset/capture`;
+    const response = await fetch(url, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!response.ok) {
+      throw new Error(`Dataset capture error ${response.status}: ${await response.text()}`);
+    }
+    return response.json();
+  }
+
+  async saveHardExample(params: {
+    correct_class: string;
+    image_id?: number;
+    file?: File | Blob;
+    notes?: string;
+  }): Promise<{ ok: boolean; correct_class: string; saved_path: string; filename: string }> {
+    const formData = new FormData();
+    formData.append('correct_class', params.correct_class);
+    if (params.image_id !== undefined) {
+      formData.append('image_id', String(params.image_id));
+    }
+    if (params.file) {
+      formData.append('file', params.file);
+    }
+    if (params.notes) {
+      formData.append('notes', params.notes);
+    }
+
+    const url = `${this.baseUrl}/api/hard-example`;
+    const response = await fetch(url, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!response.ok) {
+      throw new Error(`Hard example error ${response.status}: ${await response.text()}`);
+    }
+    return response.json();
+  }
+
   // Decision
   async decide(payload: {
     moisture_pct?: number;

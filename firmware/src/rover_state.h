@@ -6,7 +6,10 @@
 enum class RoverMode {
     IDLE,
     MANUAL,
-    MISSION
+    MISSION,
+    PAUSED,
+    ESTOP,
+    FAULT
 };
 
 inline const char* modeToString(RoverMode mode) {
@@ -14,6 +17,9 @@ inline const char* modeToString(RoverMode mode) {
         case RoverMode::IDLE: return "idle";
         case RoverMode::MANUAL: return "manual";
         case RoverMode::MISSION: return "mission";
+        case RoverMode::PAUSED: return "paused";
+        case RoverMode::ESTOP: return "estop";
+        case RoverMode::FAULT: return "fault";
         default: return "idle";
     }
 }
@@ -27,6 +33,15 @@ inline bool stringToMode(const String& str, RoverMode& outMode) {
         return true;
     } else if (str.equalsIgnoreCase("mission")) {
         outMode = RoverMode::MISSION;
+        return true;
+    } else if (str.equalsIgnoreCase("paused")) {
+        outMode = RoverMode::PAUSED;
+        return true;
+    } else if (str.equalsIgnoreCase("estop")) {
+        outMode = RoverMode::ESTOP;
+        return true;
+    } else if (str.equalsIgnoreCase("fault")) {
+        outMode = RoverMode::FAULT;
         return true;
     }
     return false;

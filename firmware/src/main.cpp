@@ -5,6 +5,7 @@
 #include <ArduinoJson.h>
 #include <vector>
 #include <Wire.h>
+#include <esp_task_wdt.h>
 
 #include "pin_map.h"
 #include "rover_state.h"
@@ -18,6 +19,7 @@
 #include "pumps.h"
 #include "motion_controller.h"
 #include "selftest.h"
+#include "safety_controller.h"
 
 // ============================================================================
 // BLE UUID DEFINITIONS (docs/ble_protocol.md)
@@ -109,7 +111,6 @@ void sendEvent(const String& eventName, const String& extraJson) {
 void sendFault(const String& faultCode) {
     state.isFault = true;
     state.faultCode = faultCode;
-    stopAll("Fault raised: " + faultCode);
     String msg = "{\"t\":\"fault\",\"code\":\"" + faultCode + "\"}";
     sendJson(msg);
 }
@@ -124,11 +125,7 @@ void sendAlert(const String& code, const String& msg) {
 // ============================================================================
 void stopAll(const String& reason) {
     state.isMoving = false;
-    MotorDriver::instance().emergencyStop();
-    MotionController::instance().cancel();
-    PumpManager::instance().stopAll();
-
-    Serial.printf("[SAFETY] stopAll() invoked. Reason: %s\n", reason.c_str());
+    SafetyController::instance().emergencyStopAll(reason);
 }
 
 // ============================================================================
@@ -143,19 +140,14 @@ class ServerCallbacks : public NimBLEServerCallbacks {
         if (state.currentMtu < 23) state.currentMtu = 23;
 
         Serial.printf("[BLE] Client connected (handle=%u, MTU=%u)\n", desc->conn_handle, state.currentMtu);
+        // Send initial mode event immediately upon connection
+        sendEvent("mode", "\"m\":\"" + String(SafetyController::instance().getModeString()) + "\"");
     }
 
     void onDisconnect(NimBLEServer* pServ) override {
-        bool wasMoving = MotorDriver::instance().isMoving() || MotionController::instance().isBusy();
         state.isConnected = false;
-        Serial.println("[BLE] Client disconnected! Stopping rover and restarting advertising...");
-        stopAll("BLE Disconnected");
-
-        if (wasMoving) {
-            state.isFault = true;
-            state.faultCode = "HB_LOST";
-        }
-
+        Serial.println("[BLE] Client disconnected! Stopping actuators and setting PAUSED mode...");
+        SafetyController::instance().onBleDisconnected();
         NimBLEDevice::startAdvertising();
     }
 
@@ -237,25 +229,16 @@ void handleIncomingCommand(const String& line) {
     // Command 3: ESTOP RESET (estop_reset)
     // ------------------------------------------------------------------------
     if (strcmp(cmd, "estop_reset") == 0) {
-        state.isEStop = false;
-        state.isFault = false;
-        state.faultCode = "";
-        Serial.println("[SAFETY] E-Stop & faults cleared via estop_reset.");
-        sendAck("estop_reset", true);
-        return;
-    }
-
-    // Safety refusal checks for non-stop commands
-    if (state.isEStop) {
-        sendAck(cmd, false, "estop active");
-        return;
-    }
-    if (state.isFault) {
-        sendAck(cmd, false, "fault active: " + state.faultCode);
-        return;
-    }
-    if (state.isLowBat) {
-        sendAck(cmd, false, "low battery cutoff");
+        String reason;
+        if (SafetyController::instance().handleEStopReset(reason)) {
+            state.isEStop = false;
+            state.isFault = false;
+            state.faultCode = "";
+            Serial.println("[SAFETY] E-Stop & faults cleared via estop_reset.");
+            sendAck("estop_reset", true);
+        } else {
+            sendAck("estop_reset", false, reason);
+        }
         return;
     }
 
@@ -263,14 +246,9 @@ void handleIncomingCommand(const String& line) {
     // Command 4: DRIVE (l, r) [-100..100]
     // ------------------------------------------------------------------------
     if (strcmp(cmd, "drive") == 0) {
-        if (state.mode == RoverMode::MISSION) {
-            sendAck("drive", false, "auto mode");
-            return;
-        }
-
-        // Refused if probe is not up
-        if (!ProbeController::instance().isUp()) {
-            sendAck("drive", false, "probe not up");
+        String reason;
+        if (!SafetyController::instance().validateDrive(reason)) {
+            sendAck("drive", false, reason);
             return;
         }
 
@@ -290,10 +268,14 @@ void handleIncomingCommand(const String& line) {
         const char* mStr = doc["m"] | "";
         RoverMode newMode;
         if (stringToMode(String(mStr), newMode)) {
-            state.mode = newMode;
-            Serial.printf("[MODE] Switched to %s\n", mStr);
-            sendAck("mode", true, "", "\"m\":\"" + String(mStr) + "\"");
-            sendEvent("mode", "\"m\":\"" + String(mStr) + "\"");
+            String reason;
+            if (SafetyController::instance().requestModeChange(newMode, reason)) {
+                state.mode = newMode;
+                Serial.printf("[MODE] Switched to %s\n", mStr);
+                sendAck("mode", true, "", "\"m\":\"" + String(mStr) + "\"");
+            } else {
+                sendAck("mode", false, reason);
+            }
         } else {
             sendAck("mode", false, "invalid mode value");
         }
@@ -304,8 +286,9 @@ void handleIncomingCommand(const String& line) {
     // Command 6: MOVE (mm)
     // ------------------------------------------------------------------------
     if (strcmp(cmd, "move") == 0) {
-        if (!ProbeController::instance().isUp()) {
-            sendAck("move", false, "probe not up");
+        String reason;
+        if (!SafetyController::instance().validateMove(reason)) {
+            sendAck("move", false, reason);
             return;
         }
 
@@ -323,8 +306,9 @@ void handleIncomingCommand(const String& line) {
     // Command 7: TURN (deg)
     // ------------------------------------------------------------------------
     if (strcmp(cmd, "turn") == 0) {
-        if (!ProbeController::instance().isUp()) {
-            sendAck("turn", false, "probe not up");
+        String reason;
+        if (!SafetyController::instance().validateTurn(reason)) {
+            sendAck("turn", false, reason);
             return;
         }
 
@@ -342,6 +326,12 @@ void handleIncomingCommand(const String& line) {
     // Command 8: PROBE (a: down|up|read)
     // ------------------------------------------------------------------------
     if (strcmp(cmd, "probe") == 0) {
+        String reason;
+        if (!SafetyController::instance().validateProbe(reason)) {
+            sendAck("probe", false, reason);
+            return;
+        }
+
         const char* action = doc["a"] | "";
         if (strcmp(action, "down") == 0) {
             if (ProbeController::instance().commandDown()) {
@@ -372,6 +362,12 @@ void handleIncomingCommand(const String& line) {
     // Command 9: NOZZLE (pan, tilt)
     // ------------------------------------------------------------------------
     if (strcmp(cmd, "nozzle") == 0) {
+        String reason;
+        if (!SafetyController::instance().validateNozzle(reason)) {
+            sendAck("nozzle", false, reason);
+            return;
+        }
+
         if (doc.containsKey("pan")) {
             float pan = doc["pan"].as<float>();
             ServosPCA9685::instance().setTargetAngle(ServoChannel::NOZZLE_PAN, pan);
@@ -390,6 +386,12 @@ void handleIncomingCommand(const String& line) {
     // Command 10: CAMTILT (pose: leaf|stem)
     // ------------------------------------------------------------------------
     if (strcmp(cmd, "camtilt") == 0) {
+        String reason;
+        if (!SafetyController::instance().validateCamTilt(reason)) {
+            sendAck("camtilt", false, reason);
+            return;
+        }
+
         const char* pose = doc["pose"] | "";
         if (strcmp(pose, "leaf") == 0) {
             ServosPCA9685::instance().setTargetAngle(ServoChannel::CAM_TILT, 60.0f);
@@ -409,6 +411,12 @@ void handleIncomingCommand(const String& line) {
     // Command 11: PUMP (id: water|treat, ms)
     // ------------------------------------------------------------------------
     if (strcmp(cmd, "pump") == 0) {
+        String reason;
+        if (!SafetyController::instance().validatePump(reason)) {
+            sendAck("pump", false, reason);
+            return;
+        }
+
         const char* id = doc["id"] | "";
         PumpId pId = PumpId::NONE;
         if (strcmp(id, "water") == 0) pId = PumpId::WATER;
@@ -451,6 +459,12 @@ void handleIncomingCommand(const String& line) {
     // Command 13: SELFTEST
     // ------------------------------------------------------------------------
     if (strcmp(cmd, "selftest") == 0) {
+        String reason;
+        if (!SafetyController::instance().validateSelfTest(reason)) {
+            sendAck("selftest", false, reason);
+            return;
+        }
+
         if (SelfTestRunner::instance().start()) {
             sendAck("selftest", true);
         } else {
@@ -478,25 +492,9 @@ void broadcastTelemetry() {
     long encL = EncoderDriver::instance().getTicksL();
     long encR = EncoderDriver::instance().getTicksR();
 
-    // Check battery low cutoff
-    if (bat < 10.5f && bat > 5.0f && !state.isLowBat) {
-        state.isLowBat = true;
-        sendFault("LOW_BAT_CUTOFF");
-    }
-
-    // Check tilt limit safety (e.g. > 35 degrees)
-    if (tilt > 35.0f && !state.isFault) {
-        sendFault("TILT");
-    }
-
-    // Check obstacle proximity safety during forward motion
-    if (dist < 15 && MotorDriver::instance().getCurrentLeft() > 0 && !state.isFault) {
-        sendFault("OBSTACLE");
-    }
-
     String tel = "{\"t\":\"tel\"";
     tel += ",\"bat\":" + String(bat, 1);
-    tel += ",\"mode\":\"" + String(modeToString(state.mode)) + "\"";
+    tel += ",\"mode\":\"" + String(SafetyController::instance().getModeString()) + "\"";
     tel += ",\"soil\":" + String(soil);
     tel += ",\"temp\":" + String(temp, 1);
     tel += ",\"hum\":" + String(hum, 1);
@@ -517,12 +515,7 @@ void checkHeartbeatWatchdog() {
 
     unsigned long now = millis();
     if (now - state.lastMessageMs > 1000) {
-        bool moving = MotorDriver::instance().isMoving() || MotionController::instance().isBusy() || PumpManager::instance().isRunning();
-        if (moving) {
-            Serial.println("[WATCHDOG] Heartbeat lost for >1000ms while moving! Stopping and raising HB_LOST fault.");
-            stopAll("Heartbeat Watchdog Timeout");
-            sendFault("HB_LOST");
-        }
+        SafetyController::instance().onHeartbeatTimeout();
     }
 }
 
@@ -540,7 +533,7 @@ void setupSubsystemCallbacks() {
             }
         },
         [](const String& faultCode) {
-            sendFault(faultCode);
+            SafetyController::instance().triggerFault(faultCode, "Probe Fault");
         }
     );
 
@@ -573,7 +566,7 @@ void setup() {
     delay(400);
 
     Serial.println("\n========================================================");
-    Serial.println("   AgriRover ESP32 Main Controller - Real Drivers Boot  ");
+    Serial.println("   AgriRover ESP32 Main Controller - Safety & State Boot ");
     Serial.println("========================================================");
 
     // 1. Initialize NVS Config Storage
@@ -585,7 +578,7 @@ void setup() {
     // 3. Initialize FreeRTOS synchronization mutex
     queueMutex = xSemaphoreCreateMutex();
 
-    // 4. Initialize Hardware Subsystems
+    // 4. Initialize Hardware Subsystems (At boot all outputs OFF, servos at safe pos)
     MotorDriver::instance().init();
     EncoderDriver::instance().init();
     ImuDriver::instance().init();
@@ -598,14 +591,38 @@ void setup() {
     // 5. Connect Subsystem Events
     setupSubsystemCallbacks();
 
-    // 6. Optional E-Stop & GPS RX pins
-    pinMode(PIN_ESTOP_SENSE, INPUT_PULLUP);
+    // 6. Initialize Safety Controller & State Machine
+    SafetyController::instance().init(
+        [](const String& eventName, const String& extraJson) {
+            sendEvent(eventName, extraJson);
+        },
+        [](const String& faultCode) {
+            sendFault(faultCode);
+        },
+        [](const String& code, const String& msg) {
+            sendAlert(code, msg);
+        }
+    );
+
+    // 7. Optional GPS RX pin
     pinMode(PIN_GPS_RX, INPUT);
 
-    // Ensure all motors and actuators are initially idle
+    // 8. Configure ESP32 Task Watchdog Timer (TWDT, 5000ms timeout)
+    esp_task_wdt_config_t twdt_config = {
+        .timeout_ms = 5000,
+        .idle_core_mask = 0,
+        .trigger_panic = true,
+    };
+    if (esp_task_wdt_reconfigure(&twdt_config) != ESP_OK) {
+        esp_task_wdt_init(&twdt_config);
+    }
+    esp_task_wdt_add(NULL); // Subscribe Arduino loopTask
+    Serial.println("[WDT] ESP32 Task Watchdog Timer active (5000ms timeout).");
+
+    // Ensure all motors and actuators are initially idle and safe
     stopAll("Initial Boot");
 
-    // 7. Initialize NimBLE Stack
+    // 9. Initialize NimBLE Stack
     NimBLEDevice::init(BLE_DEVICE_NAME);
     NimBLEDevice::setPower(ESP_PWR_LVL_P9);
 
@@ -639,6 +656,9 @@ void setup() {
 // MAIN LOOP (NON-BLOCKING)
 // ============================================================================
 void loop() {
+    // 0. Pet the ESP32 Task Watchdog
+    esp_task_wdt_reset();
+
     // 1. Process queued incoming lines from BLE
     String nextLine = "";
     if (queueMutex != nullptr && xSemaphoreTake(queueMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
@@ -663,11 +683,8 @@ void loop() {
     MotionController::instance().update();
     SelfTestRunner::instance().update();
 
-    // 3. Hardware E-Stop pin sensing (active LOW if switch closed to GND)
-    if (digitalRead(PIN_ESTOP_SENSE) == LOW && !state.isEStop) {
-        state.isEStop = true;
-        sendFault("ESTOP");
-    }
+    // 3. Central Safety Controller Update (Hardware E-Stop pin, Bat, Tilt, Obstacle, Slip)
+    SafetyController::instance().update();
 
     // 4. Heartbeat Watchdog check (1000 ms)
     checkHeartbeatWatchdog();

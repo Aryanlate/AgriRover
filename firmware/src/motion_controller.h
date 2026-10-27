@@ -19,6 +19,7 @@ public:
     void cancel();
 
     bool isBusy() const { return mode != MotionMode::IDLE; }
+    bool isMovingForward() const { return mode == MotionMode::MOVING_STRAIGHT && isForward; }
     MotionMode getMode() const { return mode; }
 
     typedef void (*ArrivedCallback)(int traveledMm, int turnedDeg, bool isMove);

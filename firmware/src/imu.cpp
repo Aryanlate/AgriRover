@@ -1,6 +1,10 @@
 #include "imu.h"
 #include <cmath>
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 ImuDriver& ImuDriver::instance() {
     static ImuDriver inst;
     return inst;
@@ -119,6 +123,7 @@ void ImuDriver::update() {
         gz_rate = 0.0f;
     }
 
+    gyroRateZ = gz_rate;
     headingDeg += gz_rate * dt;
 
     // Normalize heading to [-180, 180]

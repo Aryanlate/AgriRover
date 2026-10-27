@@ -34,6 +34,19 @@ public:
     uint32_t getTotalTreatRunMs() const;
     void addTreatRunMs(uint32_t ms);
 
+    // Safety parameters
+    float getBatWarn() const;
+    void setBatWarn(float val);
+
+    float getBatCutoff() const;
+    void setBatCutoff(float val);
+
+    float getTiltLimit() const;
+    void setTiltLimit(float val);
+
+    int getObstacleDistCm() const;
+    void setObstacleDistCm(int val);
+
     // Generic key/value interface for BLE 'cfg' command
     bool setGeneric(const String& key, const String& val);
     String getGeneric(const String& key, const String& defaultVal = "") const;
@@ -50,4 +63,9 @@ private:
     uint32_t pumpMaxCapMs = 5000;
     uint32_t totalWaterMs = 0;
     uint32_t totalTreatMs = 0;
+
+    float batWarn = 11.2f;
+    float batCutoff = 10.5f;
+    float tiltLimit = 35.0f;
+    int obstacleDistCm = 20;
 };

@@ -17,10 +17,14 @@ void ConfigStore::init() {
     pumpMaxCapMs = prefs.getUInt("pump_cap", 5000);
     totalWaterMs = prefs.getUInt("tot_wat", 0);
     totalTreatMs = prefs.getUInt("tot_trt", 0);
+    batWarn = prefs.getFloat("bat_warn", 11.2f);
+    batCutoff = prefs.getFloat("bat_cut", 10.5f);
+    tiltLimit = prefs.getFloat("tilt_lim", 35.0f);
+    obstacleDistCm = prefs.getInt("obs_dist", 20);
     prefs.end();
 
-    Serial.printf("[NVS] Loaded: mmPerPulse=%.3f, maxSpeed=%d, rampStep=%d, batCal=%.2f, relayAH=%d\n",
-                  mmPerPulse, maxSpeed, rampStep, batCal, relayActiveHigh);
+    Serial.printf("[NVS] Loaded: mmPerPulse=%.3f, maxSpd=%d, batCal=%.2f, batWarn=%.1fV, batCut=%.1fV, tiltLim=%.1f, obsDist=%dcm\n",
+                  mmPerPulse, maxSpeed, batCal, batWarn, batCutoff, tiltLimit, obstacleDistCm);
 }
 
 float ConfigStore::getMmPerPulse() const {
@@ -113,6 +117,53 @@ void ConfigStore::addTreatRunMs(uint32_t ms) {
     prefs.end();
 }
 
+float ConfigStore::getBatWarn() const {
+    return batWarn;
+}
+
+void ConfigStore::setBatWarn(float val) {
+    if (val < 5.0f || val > 15.0f) return;
+    batWarn = val;
+    prefs.begin(PREFS_NAMESPACE, false);
+    prefs.putFloat("bat_warn", val);
+    prefs.end();
+}
+
+float ConfigStore::getBatCutoff() const {
+    return batCutoff;
+}
+
+void ConfigStore::setBatCutoff(float val) {
+    if (val < 5.0f || val > 15.0f) return;
+    batCutoff = val;
+    prefs.begin(PREFS_NAMESPACE, false);
+    prefs.putFloat("bat_cut", val);
+    prefs.end();
+}
+
+float ConfigStore::getTiltLimit() const {
+    return tiltLimit;
+}
+
+void ConfigStore::setTiltLimit(float val) {
+    if (val < 5.0f || val > 80.0f) return;
+    tiltLimit = val;
+    prefs.begin(PREFS_NAMESPACE, false);
+    prefs.putFloat("tilt_lim", val);
+    prefs.end();
+}
+
+int ConfigStore::getObstacleDistCm() const {
+    return obstacleDistCm;
+}
+
+void ConfigStore::setObstacleDistCm(int val) {
+    obstacleDistCm = constrain(val, 5, 200);
+    prefs.begin(PREFS_NAMESPACE, false);
+    prefs.putInt("obs_dist", obstacleDistCm);
+    prefs.end();
+}
+
 bool ConfigStore::setGeneric(const String& key, const String& val) {
     if (key.length() == 0) return false;
 
@@ -131,6 +182,22 @@ bool ConfigStore::setGeneric(const String& key, const String& val) {
     }
     if (key.equalsIgnoreCase("bat_cal")) {
         setBatCal(val.toFloat());
+        return true;
+    }
+    if (key.equalsIgnoreCase("bat_warn")) {
+        setBatWarn(val.toFloat());
+        return true;
+    }
+    if (key.equalsIgnoreCase("bat_cut") || key.equalsIgnoreCase("bat_cutoff")) {
+        setBatCutoff(val.toFloat());
+        return true;
+    }
+    if (key.equalsIgnoreCase("tilt_lim") || key.equalsIgnoreCase("tilt_limit")) {
+        setTiltLimit(val.toFloat());
+        return true;
+    }
+    if (key.equalsIgnoreCase("obs_dist") || key.equalsIgnoreCase("obstacle_dist")) {
+        setObstacleDistCm(val.toInt());
         return true;
     }
     if (key.equalsIgnoreCase("relay_active_high") || key.equalsIgnoreCase("relay_ah")) {
@@ -156,6 +223,10 @@ String ConfigStore::getGeneric(const String& key, const String& defaultVal) cons
     if (key.equalsIgnoreCase("max_speed")) return String(maxSpeed);
     if (key.equalsIgnoreCase("ramp_step")) return String(rampStep);
     if (key.equalsIgnoreCase("bat_cal")) return String(batCal, 3);
+    if (key.equalsIgnoreCase("bat_warn")) return String(batWarn, 1);
+    if (key.equalsIgnoreCase("bat_cut") || key.equalsIgnoreCase("bat_cutoff")) return String(batCutoff, 1);
+    if (key.equalsIgnoreCase("tilt_lim") || key.equalsIgnoreCase("tilt_limit")) return String(tiltLimit, 1);
+    if (key.equalsIgnoreCase("obs_dist") || key.equalsIgnoreCase("obstacle_dist")) return String(obstacleDistCm);
     if (key.equalsIgnoreCase("relay_active_high")) return relayActiveHigh ? "1" : "0";
     if (key.equalsIgnoreCase("pump_max_cap_ms")) return String(pumpMaxCapMs);
     if (key.equalsIgnoreCase("tot_water_ms")) return String(totalWaterMs);

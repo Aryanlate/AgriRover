@@ -13,6 +13,7 @@ public:
 
     float getHeadingDeg() const { return headingDeg; }
     float getTiltDeg() const { return tiltDeg; }
+    float getGyroRateZ() const { return gyroRateZ; }
     void resetHeading(float newHeading = 0.0f);
 
     bool isAvailable() const { return available; }
@@ -24,6 +25,7 @@ private:
     static constexpr uint8_t MPU_ADDR = 0x68;
 
     float biasGyroZ = 0.0f;
+    float gyroRateZ = 0.0f;
     float headingDeg = 0.0f;
     float tiltDeg = 0.0f;
 

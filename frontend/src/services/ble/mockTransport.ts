@@ -209,7 +209,7 @@ export class MockTransport implements RoverTransport {
 
     if (cmd === 'drive') {
       if (this.mode === 'mission') {
-        this.emit({ t: 'ack', c: 'drive', ok: false, reason: 'drive refused: mission mode active' });
+        this.emit({ t: 'ack', c: 'drive', ok: false, reason: 'auto mode' });
         return true;
       }
       this.emit({ t: 'ack', c: 'drive', ok: true });

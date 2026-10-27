@@ -25,6 +25,7 @@ import { Button } from '../components/ui/Button';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { useRoverStore } from '../store/roverStore';
+import { useAutoModeStore } from '../store/autoModeStore';
 import { useMissionRunner } from '../mission/useMissionRunner';
 import type { MissionConfig } from '../mission/missionRunner';
 import { apiClient } from '../services/api/client';
@@ -145,6 +146,7 @@ export const MissionPage: React.FC = () => {
     mode,
     alerts,
     send,
+    transportType,
   } = useRoverStore();
 
   const { runner, snapshot } = useMissionRunner();
@@ -249,6 +251,7 @@ export const MissionPage: React.FC = () => {
     setTimeout(() => {
       setSelfTestRunning(false);
       setSelfTestPassed(true);
+      useAutoModeStore.getState().setSelfTestPassed(true);
     }, 1500);
   };
 
@@ -258,6 +261,7 @@ export const MissionPage: React.FC = () => {
     const found = presets.find((p) => p.id === id);
     if (found) {
       setConfig({ ...found.config });
+      useAutoModeStore.getState().setActivePreset(found.name, found.config);
     }
   };
 
@@ -274,6 +278,8 @@ export const MissionPage: React.FC = () => {
     setNewPresetName('');
     setShowSavePresetInput(false);
 
+    useAutoModeStore.getState().setActivePreset(newPreset.name, newPreset.config);
+
     const customOnly = updated.filter((p) => p.id.startsWith('custom_'));
     localStorage.setItem('agrirover_mission_presets', JSON.stringify(customOnly));
   };
@@ -282,7 +288,7 @@ export const MissionPage: React.FC = () => {
   const isConnected = connectionStatus === 'connected';
   const isBatteryOk = telemetry ? telemetry.bat.pct >= config.minBatteryPct && !telemetry.bat.low : false;
   const isEstopReleased = mode !== 'estop' && !alerts.some((a) => a.code === 'ESTOP' && !a.acknowledged);
-  const isCameraReady = cameraOnline === true;
+  const isCameraReady = cameraOnline === true || transportType === 'mock';
   const isSelfTestReady = selfTestPassed;
   const isTanksReady = tanksFilledChecked;
 
@@ -1170,7 +1176,10 @@ export const MissionPage: React.FC = () => {
                 <input
                   type="checkbox"
                   checked={tanksFilledChecked}
-                  onChange={(e) => setTanksFilledChecked(e.target.checked)}
+                  onChange={(e) => {
+                    setTanksFilledChecked(e.target.checked);
+                    useAutoModeStore.getState().setTanksFilled(e.target.checked);
+                  }}
                   className="w-5 h-5 text-primary rounded border-border focus:ring-primary cursor-pointer"
                 />
               </label>

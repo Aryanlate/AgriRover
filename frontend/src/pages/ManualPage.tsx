@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
+  Activity,
   AlertTriangle,
   ArrowDown,
   ArrowLeft,
@@ -10,10 +11,14 @@ import {
   Droplets,
   FlaskConical,
   Layers,
+  Pause,
+  RotateCcw,
+  ShieldAlert,
   Square,
   Zap,
 } from 'lucide-react';
 import { useRoverStore } from '../store/roverStore';
+import { useAutoModeStore } from '../store/autoModeStore';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { Toast } from '../components/ui/Toast';
@@ -29,13 +34,28 @@ interface ToastItem {
 
 export const ManualPage: React.FC = () => {
   const {
+    connectionStatus,
     telemetry,
     send,
     mode,
     setMode,
     latestAck,
     probeMoistureResult,
+    alerts,
   } = useRoverStore();
+
+  const { turningOffPending, pauseAuto } = useAutoModeStore();
+
+  // Safety & Auto Lock State Evaluation
+  const isAutoRunning = mode === 'mission';
+  const isDisconnected = connectionStatus !== 'connected';
+  const isEstop = mode === 'estop' || alerts.some((a) => a.code === 'ESTOP' && !a.acknowledged);
+  const isFault = mode === 'fault' || alerts.some((a) => a.code.startsWith('FAULT_') && !a.acknowledged);
+  const isLowBattery = Boolean(telemetry?.bat && (telemetry.bat.pct < 20 || telemetry.bat.low));
+  const isProbeUp = !telemetry || telemetry.probe === 'up';
+
+  const isConfirmedSafe = !isDisconnected && !isEstop && !isFault && !isLowBattery && isProbeUp;
+  const isManualLocked = isAutoRunning || turningOffPending || !isConfirmedSafe;
 
   // Settings
   const [maxSpeedSetting, setMaxSpeedSetting] = useState(100);
@@ -63,8 +83,7 @@ export const ManualPage: React.FC = () => {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const lastAckTimestampRef = useRef<number>(0);
 
-  // Probe Interlock check
-  const isProbeUp = !telemetry || telemetry.probe === 'up';
+
 
   // 1. Fetch settings (max speed) on mount
   useEffect(() => {
@@ -100,17 +119,8 @@ export const ManualPage: React.FC = () => {
 
   const startDriving = useCallback(
     (dir: 'forward' | 'reverse' | 'left' | 'right') => {
-      // Rule: Interlock: reject move and turn unless the probe is fully up
-      if (!isProbeUp) {
-        setToasts((prev) => [
-          {
-            id: Math.random().toString(),
-            type: 'error',
-            title: 'Drive Disabled',
-            message: 'Probe must be fully UP before moving or turning.',
-          },
-          ...prev.slice(0, 4),
-        ]);
+      // Reject if manual controls are locked (Auto running, safety pause, probe not up)
+      if (isManualLocked) {
         return;
       }
 
@@ -144,7 +154,7 @@ export const ManualPage: React.FC = () => {
         send({ c: 'drive', l, r });
       }, 200);
     },
-    [isProbeUp, speed, send]
+    [isManualLocked, speed, send]
   );
 
   // Safety: Stop on window blur or tab hide
@@ -169,6 +179,7 @@ export const ManualPage: React.FC = () => {
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.repeat) return;
+      if (isManualLocked) return;
       // Do not capture if user is typing in an input
       if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return;
 
@@ -208,7 +219,7 @@ export const ManualPage: React.FC = () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [startDriving, stopDriving]);
+  }, [startDriving, stopDriving, isManualLocked]);
 
   // 4. Handle incoming Acks & Refusals -> Toast Notifications
   useEffect(() => {
@@ -332,15 +343,101 @@ export const ManualPage: React.FC = () => {
           </p>
         </div>
 
-        {mode !== 'manual' && (
+        {!isAutoRunning && mode !== 'manual' && (
           <Button variant="secondary" onClick={() => setMode('manual')} icon={<Zap className="w-4 h-4" />}>
             Activate Manual Mode
           </Button>
         )}
       </div>
 
+      {/* 1. Auto Mode Running Banner with Pause Button */}
+      {isAutoRunning && (
+        <Card variant="outline" className="border-water bg-water/10 p-5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <Activity className="w-6 h-6 text-water flex-shrink-0 mt-0.5 animate-pulse" />
+              <div>
+                <h3 className="text-base font-bold text-text-main flex items-center gap-2">
+                  Autonomous Mission Running (Auto ON)
+                  <span className="text-xs px-2.5 py-0.5 rounded-full bg-water/20 text-water font-black">
+                    LOCKED
+                  </span>
+                </h3>
+                <p className="text-sm text-text-muted mt-0.5">
+                  Manual teleoperation, drive pad, and pump triggers are disabled while autonomous navigation is active. Live camera stream and environmental telemetry remain active.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <Button
+                variant="secondary"
+                size="md"
+                onClick={() => pauseAuto()}
+                icon={<Pause className="w-4 h-4" />}
+              >
+                Pause Auto
+              </Button>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* 2. Disengaging Auto Pending Banner */}
+      {turningOffPending && (
+        <Card variant="outline" className="border-warning bg-warning/10 p-5">
+          <div className="flex items-start gap-3">
+            <RotateCcw className="w-6 h-6 text-warning flex-shrink-0 mt-0.5 animate-spin" />
+            <div>
+              <h3 className="text-base font-bold text-text-main">
+                Disengaging Auto Mode...
+              </h3>
+              <p className="text-sm text-text-muted mt-0.5">
+                Sent stop, raising probe, and pausing runner (preserving current plant). Manual controls will unlock once the ESP32 confirms manual mode and probe is UP.
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* 3. Safety Lock Banner (Fault, E-stop, Low Battery, Bluetooth drop) */}
+      {!isAutoRunning && !turningOffPending && (isDisconnected || isEstop || isFault || isLowBattery) && (
+        <Card variant="outline" className="border-danger bg-danger/10 p-5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <ShieldAlert className="w-6 h-6 text-danger flex-shrink-0 mt-0.5" />
+              <div>
+                <h3 className="text-base font-bold text-danger">
+                  Manual Controls Locked: Safety Condition Active
+                </h3>
+                <p className="text-sm text-text-muted mt-0.5">
+                  {isDisconnected
+                    ? 'Bluetooth link disconnected. Reconnect via top bar to regain manual teleoperation.'
+                    : isEstop
+                    ? 'Emergency Stop is active. Disengage hardware switch and reset E-stop to resume control.'
+                    : isFault
+                    ? 'Hardware fault active on rover. Resolve fault before resuming manual operation.'
+                    : isLowBattery
+                    ? `Battery (${telemetry?.bat?.pct}%) is below safe cutoff threshold (20%). Recharge rover.`
+                    : 'Safety interlock engaged.'}
+                </p>
+              </div>
+            </div>
+            {isEstop && (
+              <Button
+                variant="secondary"
+                size="md"
+                onClick={() => send({ c: 'estop_reset' })}
+                icon={<RotateCcw className="w-4 h-4" />}
+              >
+                Reset E-Stop
+              </Button>
+            )}
+          </div>
+        </Card>
+      )}
+
       {/* MAIN CONTROL PANELS GRID */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className={`grid grid-cols-1 lg:grid-cols-2 gap-6 ${isManualLocked ? 'opacity-85' : ''}`}>
         {/* PANEL 1: DRIVE PAD WITH PRESS-AND-HOLD */}
         <Card title="Drive Control & Throttle" variant="default" className="p-6 flex flex-col items-center">
           {/* Probe Interlock Warning */}
@@ -365,8 +462,9 @@ export const ManualPage: React.FC = () => {
               max={maxSpeedSetting}
               step={5}
               value={speed}
+              disabled={isManualLocked}
               onChange={(e) => setSpeed(parseInt(e.target.value, 10))}
-              className="w-full accent-primary cursor-pointer h-2 bg-border rounded-lg"
+              className="w-full accent-primary cursor-pointer h-2 bg-border rounded-lg disabled:opacity-40"
             />
             <div className="flex justify-between text-[10px] text-text-muted font-bold mt-1">
               <span>Min 10%</span>
@@ -381,7 +479,7 @@ export const ManualPage: React.FC = () => {
               variant={activeDirection === 'forward' ? 'primary' : 'secondary'}
               size="lg"
               className="min-h-[72px]"
-              disabled={!isProbeUp}
+              disabled={isManualLocked || !isProbeUp}
               onPointerDown={() => startDriving('forward')}
               onPointerUp={stopDriving}
               onPointerLeave={stopDriving}
@@ -395,7 +493,7 @@ export const ManualPage: React.FC = () => {
               variant={activeDirection === 'left' ? 'primary' : 'secondary'}
               size="lg"
               className="min-h-[72px]"
-              disabled={!isProbeUp}
+              disabled={isManualLocked || !isProbeUp}
               onPointerDown={() => startDriving('left')}
               onPointerUp={stopDriving}
               onPointerLeave={stopDriving}
@@ -417,7 +515,7 @@ export const ManualPage: React.FC = () => {
               variant={activeDirection === 'right' ? 'primary' : 'secondary'}
               size="lg"
               className="min-h-[72px]"
-              disabled={!isProbeUp}
+              disabled={isManualLocked || !isProbeUp}
               onPointerDown={() => startDriving('right')}
               onPointerUp={stopDriving}
               onPointerLeave={stopDriving}
@@ -431,7 +529,7 @@ export const ManualPage: React.FC = () => {
               variant={activeDirection === 'reverse' ? 'primary' : 'secondary'}
               size="lg"
               className="min-h-[72px]"
-              disabled={!isProbeUp}
+              disabled={isManualLocked || !isProbeUp}
               onPointerDown={() => startDriving('reverse')}
               onPointerUp={stopDriving}
               onPointerLeave={stopDriving}
@@ -475,6 +573,7 @@ export const ManualPage: React.FC = () => {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Button
               variant="secondary"
+              disabled={isManualLocked}
               onClick={() => send({ c: 'probe', a: 'down' })}
               className="w-full"
             >
@@ -482,6 +581,7 @@ export const ManualPage: React.FC = () => {
             </Button>
             <Button
               variant="secondary"
+              disabled={isManualLocked}
               onClick={() => send({ c: 'probe', a: 'up' })}
               className="w-full"
             >
@@ -489,6 +589,7 @@ export const ManualPage: React.FC = () => {
             </Button>
             <Button
               variant="primary"
+              disabled={isManualLocked}
               onClick={() => send({ c: 'probe', a: 'read' })}
               className="w-full"
             >
@@ -515,8 +616,9 @@ export const ManualPage: React.FC = () => {
                 min={-45}
                 max={45}
                 value={nozzlePan}
+                disabled={isManualLocked}
                 onChange={(e) => handleNozzleChange(parseInt(e.target.value, 10), nozzleTilt)}
-                className="w-full accent-primary cursor-pointer h-2 bg-border rounded-lg"
+                className="w-full accent-primary cursor-pointer h-2 bg-border rounded-lg disabled:opacity-40"
               />
               <div className="flex justify-between text-[10px] text-text-muted font-bold mt-1">
                 <span>Left -45°</span>
@@ -536,8 +638,9 @@ export const ManualPage: React.FC = () => {
                 min={-30}
                 max={45}
                 value={nozzleTilt}
+                disabled={isManualLocked}
                 onChange={(e) => handleNozzleChange(nozzlePan, parseInt(e.target.value, 10))}
-                className="w-full accent-primary cursor-pointer h-2 bg-border rounded-lg"
+                className="w-full accent-primary cursor-pointer h-2 bg-border rounded-lg disabled:opacity-40"
               />
               <div className="flex justify-between text-[10px] text-text-muted font-bold mt-1">
                 <span>Down -30°</span>
@@ -549,6 +652,7 @@ export const ManualPage: React.FC = () => {
 
           <Button
             variant="secondary"
+            disabled={isManualLocked}
             onClick={handleCenterNozzle}
             icon={<Crosshair className="w-4 h-4" />}
             className="w-full"
@@ -565,6 +669,7 @@ export const ManualPage: React.FC = () => {
             <div className="grid grid-cols-2 gap-3">
               <Button
                 variant={camPose === 'leaf' ? 'primary' : 'secondary'}
+                disabled={isManualLocked}
                 onClick={() => handleCamPose('leaf')}
                 icon={<Camera className="w-4 h-4" />}
               >
@@ -572,6 +677,7 @@ export const ManualPage: React.FC = () => {
               </Button>
               <Button
                 variant={camPose === 'stem' ? 'primary' : 'secondary'}
+                disabled={isManualLocked}
                 onClick={() => handleCamPose('stem')}
                 icon={<Camera className="w-4 h-4" />}
               >
@@ -598,8 +704,9 @@ export const ManualPage: React.FC = () => {
                     max={HARD_MAX_PUMP_SECONDS}
                     step={0.5}
                     value={waterPulseSec}
+                    disabled={isManualLocked}
                     onChange={(e) => setWaterPulseSec(parseFloat(e.target.value) || 1.0)}
-                    className="w-16 px-2 py-1 rounded border border-border bg-surface text-center font-mono"
+                    className="w-16 px-2 py-1 rounded border border-border bg-surface text-center font-mono disabled:opacity-40"
                   />
                   <span>sec</span>
                 </div>
@@ -607,7 +714,7 @@ export const ManualPage: React.FC = () => {
 
               <Button
                 variant="secondary"
-                disabled={waterCountdown !== null}
+                disabled={isManualLocked || waterCountdown !== null}
                 onClick={() => handleRunPump('water', waterPulseSec)}
                 className="w-full text-xs"
               >
@@ -631,8 +738,9 @@ export const ManualPage: React.FC = () => {
                     max={HARD_MAX_PUMP_SECONDS}
                     step={0.5}
                     value={treatPulseSec}
+                    disabled={isManualLocked}
                     onChange={(e) => setTreatPulseSec(parseFloat(e.target.value) || 1.0)}
-                    className="w-16 px-2 py-1 rounded border border-border bg-surface text-center font-mono"
+                    className="w-16 px-2 py-1 rounded border border-border bg-surface text-center font-mono disabled:opacity-40"
                   />
                   <span>sec</span>
                 </div>
@@ -640,7 +748,7 @@ export const ManualPage: React.FC = () => {
 
               <Button
                 variant="secondary"
-                disabled={treatCountdown !== null}
+                disabled={isManualLocked || treatCountdown !== null}
                 onClick={() => handleRunPump('treat', treatPulseSec)}
                 className="w-full text-xs"
               >

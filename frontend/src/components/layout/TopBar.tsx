@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   AlertOctagon,
   Battery,
@@ -7,11 +7,14 @@ import {
   WifiOff,
 } from 'lucide-react';
 import { useRoverStore } from '../../store/roverStore';
+import { useAutoModeStore } from '../../store/autoModeStore';
 import { LeafLogo } from '../ui/LeafLogo';
 import { Button } from '../ui/Button';
 import { StatusBadge } from '../ui/StatusBadge';
 import type { SystemStatus } from '../ui/StatusBadge';
 import { ThemeToggle } from '../ui/ThemeToggle';
+import { Switch } from '../ui/Switch';
+import { ConfirmDialog } from '../ui/ConfirmDialog';
 
 export const TopBar: React.FC = () => {
   const {
@@ -24,6 +27,48 @@ export const TopBar: React.FC = () => {
     disconnect,
     emergencyStop,
   } = useRoverStore();
+
+  const {
+    activePresetName,
+    activePreset,
+    checkPreRunReady,
+    engageAuto,
+    disengageAuto,
+    pollCameraHealth,
+  } = useAutoModeStore();
+
+  const [showEngageConfirm, setShowEngageConfirm] = useState(false);
+  const [showChecklistError, setShowChecklistError] = useState(false);
+  const [checklistErrors, setChecklistErrors] = useState<string[]>([]);
+
+  // Periodically check camera health
+  useEffect(() => {
+    pollCameraHealth();
+    const interval = setInterval(pollCameraHealth, 10000);
+    return () => clearInterval(interval);
+  }, [pollCameraHealth]);
+
+  // Derived state from telemetry mode: always OFF on load, never remembers ON
+  const isAutoOn = mode === 'mission';
+
+  const handleAutoSwitchChange = (turnOn: boolean) => {
+    if (turnOn) {
+      const ready = checkPreRunReady();
+      if (!ready.ok) {
+        setChecklistErrors(ready.errors);
+        setShowChecklistError(true);
+        return;
+      }
+      setShowEngageConfirm(true);
+    } else {
+      disengageAuto();
+    }
+  };
+
+  const handleConfirmEngage = async () => {
+    setShowEngageConfirm(false);
+    await engageAuto();
+  };
 
   const isConnected = connectionStatus === 'connected';
   const isConnecting = connectionStatus === 'connecting';
@@ -153,8 +198,21 @@ export const TopBar: React.FC = () => {
           </div>
         </div>
 
-        {/* Right Actions: Theme Toggle & Big Red E-STOP */}
+        {/* Right Actions: Auto Switch, Theme Toggle & Big Red E-STOP */}
         <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
+          {/* Global Auto Switch */}
+          <div className="flex items-center gap-2 px-2.5 py-1 rounded-xl border-2 border-border bg-app min-h-[44px]">
+            <span className="text-xs font-black uppercase text-text-muted hidden sm:inline select-none">
+              AUTO
+            </span>
+            <Switch
+              id="global-topbar-auto-switch"
+              checked={isAutoOn}
+              onChange={handleAutoSwitchChange}
+              className="p-0 hover:bg-transparent min-h-0"
+            />
+          </div>
+
           <ThemeToggle showLabels={false} className="hidden sm:inline-flex" />
 
           {/* BIG RED EMERGENCY STOP BUTTON */}
@@ -170,6 +228,30 @@ export const TopBar: React.FC = () => {
           </Button>
         </div>
       </div>
+
+      {/* Confirmation Dialog to Engage Autonomous Mode */}
+      <ConfirmDialog
+        isOpen={showEngageConfirm}
+        title="Engage Autonomous Mission Mode?"
+        description={`Start autonomous patrol with preset '${activePresetName}' (${activePreset.rows} row(s), ${activePreset.plantsPerRow} plants/row). The rover will automatically traverse plant positions, read soil probes, inspect health, and dispense precision treatment.`}
+        confirmText="Engage Auto"
+        cancelText="Cancel"
+        variant="primary"
+        onConfirm={handleConfirmEngage}
+        onCancel={() => setShowEngageConfirm(false)}
+      />
+
+      {/* Checklist Incomplete Dialog */}
+      <ConfirmDialog
+        isOpen={showChecklistError}
+        title="Cannot Engage Auto: Checklist Incomplete"
+        description={`The autonomous mission cannot be engaged until all pre-run safety conditions pass:\n\n• ${checklistErrors.join('\n• ')}`}
+        confirmText="Review Checklist"
+        cancelText="Close"
+        variant="danger"
+        onConfirm={() => setShowChecklistError(false)}
+        onCancel={() => setShowChecklistError(false)}
+      />
     </header>
   );
 };

@@ -17,6 +17,8 @@
                 "C:/Users/ARYAN/.platformio/packages/framework-arduinoespressif32/libraries/Hash/src",
                 "C:/Users/ARYAN/.platformio/packages/framework-arduinoespressif32/libraries/Network/src",
                 "C:/Users/ARYAN/.platformio/packages/framework-arduinoespressif32/libraries/FS/src",
+                "C:/Users/ARYAN/.platformio/packages/framework-arduinoespressif32/libraries/Wire/src",
+                "C:/Users/ARYAN/.platformio/packages/framework-arduinoespressif32/libraries/Preferences/src",
                 "C:/Users/ARYAN/.platformio/packages/framework-arduinoespressif32/cores/esp32",
                 "C:/Users/ARYAN/.platformio/packages/framework-arduinoespressif32-esp32-libs/dio_qspi/include",
                 "C:/Users/ARYAN/.platformio/packages/framework-arduinoespressif32-esp32-libs/include/newlib/platform_include",

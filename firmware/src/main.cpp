@@ -4,8 +4,20 @@
 #include <NimBLEDevice.h>
 #include <ArduinoJson.h>
 #include <vector>
+#include <Wire.h>
+
 #include "pin_map.h"
 #include "rover_state.h"
+#include "config_store.h"
+#include "motors.h"
+#include "encoders.h"
+#include "imu.h"
+#include "servos_pca9685.h"
+#include "sensors.h"
+#include "probe_controller.h"
+#include "pumps.h"
+#include "motion_controller.h"
+#include "selftest.h"
 
 // ============================================================================
 // BLE UUID DEFINITIONS (docs/ble_protocol.md)
@@ -21,7 +33,7 @@ static NimBLEServer* pServer = nullptr;
 static NimBLECharacteristic* pTxChar = nullptr;
 static NimBLECharacteristic* pRxChar = nullptr;
 
-// Thread-safe incoming line queue using FreeRTOS mutex (never allocate heap in critical sections)
+// Thread-safe incoming line queue using FreeRTOS mutex
 static std::string rxRawAccumulator;
 static std::vector<String> incomingLineQueue;
 static SemaphoreHandle_t queueMutex = nullptr;
@@ -53,7 +65,7 @@ void sendJson(const String& jsonStr) {
 
     // Standard BLE ATT header is 3 bytes
     size_t chunkLimit = state.currentMtu > 3 ? (state.currentMtu - 3) : 20;
-    if (chunkLimit > 180) chunkLimit = 180; // Safety cap to avoid ringbuffer exhaustion
+    if (chunkLimit > 180) chunkLimit = 180; // Safety cap
     if (chunkLimit < 20)  chunkLimit = 20;
 
     while (offset < totalLen) {
@@ -67,7 +79,6 @@ void sendJson(const String& jsonStr) {
 
         offset += sendLen;
         if (offset < totalLen) {
-            // Tiny microsecond pause between split chunks
             delayMicroseconds(400);
         }
     }
@@ -98,6 +109,7 @@ void sendEvent(const String& eventName, const String& extraJson) {
 void sendFault(const String& faultCode) {
     state.isFault = true;
     state.faultCode = faultCode;
+    stopAll("Fault raised: " + faultCode);
     String msg = "{\"t\":\"fault\",\"code\":\"" + faultCode + "\"}";
     sendJson(msg);
 }
@@ -108,27 +120,15 @@ void sendAlert(const String& code, const String& msg) {
 }
 
 // ============================================================================
-// ACTUATOR STUBS
+// HARDWARE SHUTDOWN / EMERGENCY STOP
 // ============================================================================
 void stopAll(const String& reason) {
     state.isMoving = false;
-    state.speedL = 0;
-    state.speedR = 0;
-    state.moveActive = false;
-    state.turnActive = false;
-    state.pumpActive = false;
+    MotorDriver::instance().emergencyStop();
+    MotionController::instance().cancel();
+    PumpManager::instance().stopAll();
 
-    // Hardware stubs: drive all motor and relay pins LOW
-    digitalWrite(PIN_MOTOR_L_ENA, LOW);
-    digitalWrite(PIN_MOTOR_L_IN1, LOW);
-    digitalWrite(PIN_MOTOR_L_IN2, LOW);
-    digitalWrite(PIN_MOTOR_R_ENB, LOW);
-    digitalWrite(PIN_MOTOR_R_IN3, LOW);
-    digitalWrite(PIN_MOTOR_R_IN4, LOW);
-    digitalWrite(PIN_RELAY_WATER, LOW);
-    digitalWrite(PIN_RELAY_TREAT, LOW);
-
-    Serial.printf("[STUB] stopAll() called. Reason: %s\n", reason.c_str());
+    Serial.printf("[SAFETY] stopAll() invoked. Reason: %s\n", reason.c_str());
 }
 
 // ============================================================================
@@ -142,13 +142,13 @@ class ServerCallbacks : public NimBLEServerCallbacks {
         state.currentMtu = pServ->getPeerMTU(desc->conn_handle);
         if (state.currentMtu < 23) state.currentMtu = 23;
 
-        Serial.printf("[BLE] Connected (handle=%u, MTU=%u)\n", desc->conn_handle, state.currentMtu);
+        Serial.printf("[BLE] Client connected (handle=%u, MTU=%u)\n", desc->conn_handle, state.currentMtu);
     }
 
     void onDisconnect(NimBLEServer* pServ) override {
-        bool wasMoving = state.isMoving;
+        bool wasMoving = MotorDriver::instance().isMoving() || MotionController::instance().isBusy();
         state.isConnected = false;
-        Serial.println("[BLE] Disconnected! Stopping rover and restarting advertising...");
+        Serial.println("[BLE] Client disconnected! Stopping rover and restarting advertising...");
         stopAll("BLE Disconnected");
 
         if (wasMoving) {
@@ -156,7 +156,6 @@ class ServerCallbacks : public NimBLEServerCallbacks {
             state.faultCode = "HB_LOST";
         }
 
-        // Restart advertising so client can reconnect
         NimBLEDevice::startAdvertising();
     }
 
@@ -186,11 +185,10 @@ class RxCallbacks : public NimBLECharacteristicCallbacks {
                     rxRawAccumulator.clear();
                 }
             } else if (c != '\r') {
-                // Safeguard maximum line buffer
                 if (rxRawAccumulator.length() < 1024) {
                     rxRawAccumulator += c;
                 } else {
-                    rxRawAccumulator.clear(); // Overflow discard
+                    rxRawAccumulator.clear();
                 }
             }
         }
@@ -199,7 +197,6 @@ class RxCallbacks : public NimBLECharacteristicCallbacks {
 
 // ============================================================================
 // INCOMING COMMAND DISPATCHER
-// Implements every command in docs/ble_protocol.md
 // ============================================================================
 void handleIncomingCommand(const String& line) {
     JsonDocument doc;
@@ -216,7 +213,7 @@ void handleIncomingCommand(const String& line) {
         return;
     }
 
-    // Update heartbeat watchdog timestamp on any valid command
+    // Update heartbeat watchdog timestamp
     state.lastMessageMs = millis();
 
     // ------------------------------------------------------------------------
@@ -248,7 +245,7 @@ void handleIncomingCommand(const String& line) {
         return;
     }
 
-    // Safety refusal check for all other active commands
+    // Safety refusal checks for non-stop commands
     if (state.isEStop) {
         sendAck(cmd, false, "estop active");
         return;
@@ -266,14 +263,13 @@ void handleIncomingCommand(const String& line) {
     // Command 4: DRIVE (l, r) [-100..100]
     // ------------------------------------------------------------------------
     if (strcmp(cmd, "drive") == 0) {
-        // Refused in mission mode
         if (state.mode == RoverMode::MISSION) {
             sendAck("drive", false, "auto mode");
             return;
         }
 
         // Refused if probe is not up
-        if (state.probeState != "up") {
+        if (!ProbeController::instance().isUp()) {
             sendAck("drive", false, "probe not up");
             return;
         }
@@ -281,15 +277,8 @@ void handleIncomingCommand(const String& line) {
         int l = doc["l"] | 0;
         int r = doc["r"] | 0;
 
-        // Clamp to [-100, 100]
-        l = constrain(l, -100, 100);
-        r = constrain(r, -100, 100);
-
-        state.speedL = l;
-        state.speedR = r;
+        MotorDriver::instance().setTargetSpeed(l, r);
         state.isMoving = (l != 0 || r != 0);
-
-        Serial.printf("[STUB] Drive set: L=%d, R=%d (Moving: %s)\n", l, r, state.isMoving ? "YES" : "NO");
         sendAck("drive", true);
         return;
     }
@@ -315,21 +304,18 @@ void handleIncomingCommand(const String& line) {
     // Command 6: MOVE (mm)
     // ------------------------------------------------------------------------
     if (strcmp(cmd, "move") == 0) {
-        if (state.probeState != "up") {
+        if (!ProbeController::instance().isUp()) {
             sendAck("move", false, "probe not up");
             return;
         }
 
         int mm = doc["mm"] | 0;
-        state.moveActive = true;
-        state.moveMm = mm;
-        state.isMoving = true;
-        // Non-blocking duration calculation stub (~100 ms per 50 mm, min 200 ms)
-        unsigned long duration = (abs(mm) * 2 > 200) ? (unsigned long)(abs(mm) * 2) : 200UL;
-        state.moveEndMs = millis() + duration;
-
-        Serial.printf("[STUB] Move command initiated: %d mm (Sim duration: %lu ms)\n", mm, duration);
-        sendAck("move", true, "", "\"mm\":" + String(mm));
+        if (MotionController::instance().startMove(mm)) {
+            state.isMoving = true;
+            sendAck("move", true, "", "\"mm\":" + String(mm));
+        } else {
+            sendAck("move", false, "controller busy or zero distance");
+        }
         return;
     }
 
@@ -337,21 +323,18 @@ void handleIncomingCommand(const String& line) {
     // Command 7: TURN (deg)
     // ------------------------------------------------------------------------
     if (strcmp(cmd, "turn") == 0) {
-        if (state.probeState != "up") {
+        if (!ProbeController::instance().isUp()) {
             sendAck("turn", false, "probe not up");
             return;
         }
 
         int deg = doc["deg"] | 0;
-        state.turnActive = true;
-        state.turnDeg = deg;
-        state.isMoving = true;
-        // Non-blocking duration calculation stub (~10 ms per degree, min 200 ms)
-        unsigned long duration = (abs(deg) * 10 > 200) ? (unsigned long)(abs(deg) * 10) : 200UL;
-        state.turnEndMs = millis() + duration;
-
-        Serial.printf("[STUB] Turn command initiated: %d deg (Sim duration: %lu ms)\n", deg, duration);
-        sendAck("turn", true, "", "\"deg\":" + String(deg));
+        if (MotionController::instance().startTurn(deg)) {
+            state.isMoving = true;
+            sendAck("turn", true, "", "\"deg\":" + String(deg));
+        } else {
+            sendAck("turn", false, "controller busy or zero angle");
+        }
         return;
     }
 
@@ -361,20 +344,24 @@ void handleIncomingCommand(const String& line) {
     if (strcmp(cmd, "probe") == 0) {
         const char* action = doc["a"] | "";
         if (strcmp(action, "down") == 0) {
-            state.probeState = "down";
-            Serial.println("[STUB] Probe inserted DOWN");
-            sendAck("probe", true, "", "\"a\":\"down\"");
-            sendEvent("probe_done", "\"a\":\"down\"");
+            if (ProbeController::instance().commandDown()) {
+                sendAck("probe", true, "", "\"a\":\"down\"");
+            } else {
+                sendAck("probe", false, "probe already moving");
+            }
         } else if (strcmp(action, "up") == 0) {
-            state.probeState = "up";
-            Serial.println("[STUB] Probe retracted UP");
-            sendAck("probe", true, "", "\"a\":\"up\"");
-            sendEvent("probe_done", "\"a\":\"up\"");
+            if (ProbeController::instance().commandUp()) {
+                sendAck("probe", true, "", "\"a\":\"up\"");
+            } else {
+                sendAck("probe", false, "probe already moving");
+            }
         } else if (strcmp(action, "read") == 0) {
-            int soilVal = state.soilMoisture;
-            Serial.printf("[STUB] Probe moisture read: %d%%\n", soilVal);
-            sendAck("probe", true, "", "\"a\":\"read\",\"v\":" + String(soilVal));
-            sendEvent("probe_done", "\"a\":\"read\",\"val\":" + String(soilVal));
+            if (ProbeController::instance().commandRead()) {
+                int soilVal = SensorManager::instance().getSoilPercent();
+                sendAck("probe", true, "", "\"a\":\"read\",\"v\":" + String(soilVal));
+            } else {
+                sendAck("probe", false, "probe busy");
+            }
         } else {
             sendAck("probe", false, "invalid action");
         }
@@ -385,10 +372,17 @@ void handleIncomingCommand(const String& line) {
     // Command 9: NOZZLE (pan, tilt)
     // ------------------------------------------------------------------------
     if (strcmp(cmd, "nozzle") == 0) {
-        state.nozzlePan = doc["pan"] | state.nozzlePan;
-        state.nozzleTilt = doc["tilt"] | state.nozzleTilt;
-        Serial.printf("[STUB] Nozzle aim set: Pan=%d, Tilt=%d\n", state.nozzlePan, state.nozzleTilt);
-        sendAck("nozzle", true, "", "\"pan\":" + String(state.nozzlePan) + ",\"tilt\":" + String(state.nozzleTilt));
+        if (doc.containsKey("pan")) {
+            float pan = doc["pan"].as<float>();
+            ServosPCA9685::instance().setTargetAngle(ServoChannel::NOZZLE_PAN, pan);
+        }
+        if (doc.containsKey("tilt")) {
+            float tilt = doc["tilt"].as<float>();
+            ServosPCA9685::instance().setTargetAngle(ServoChannel::NOZZLE_TILT, tilt);
+        }
+        float curPan = ServosPCA9685::instance().getTargetAngle(ServoChannel::NOZZLE_PAN);
+        float curTilt = ServosPCA9685::instance().getTargetAngle(ServoChannel::NOZZLE_TILT);
+        sendAck("nozzle", true, "", "\"pan\":" + String((int)curPan) + ",\"tilt\":" + String((int)curTilt));
         return;
     }
 
@@ -397,10 +391,14 @@ void handleIncomingCommand(const String& line) {
     // ------------------------------------------------------------------------
     if (strcmp(cmd, "camtilt") == 0) {
         const char* pose = doc["pose"] | "";
-        if (strcmp(pose, "leaf") == 0 || strcmp(pose, "stem") == 0) {
-            state.camPose = pose;
-            Serial.printf("[STUB] Camera tilt pose set: %s\n", pose);
-            sendAck("camtilt", true, "", "\"pose\":\"" + String(pose) + "\"");
+        if (strcmp(pose, "leaf") == 0) {
+            ServosPCA9685::instance().setTargetAngle(ServoChannel::CAM_TILT, 60.0f);
+            state.camPose = "leaf";
+            sendAck("camtilt", true, "", "\"pose\":\"leaf\"");
+        } else if (strcmp(pose, "stem") == 0) {
+            ServosPCA9685::instance().setTargetAngle(ServoChannel::CAM_TILT, 120.0f);
+            state.camPose = "stem";
+            sendAck("camtilt", true, "", "\"pose\":\"stem\"");
         } else {
             sendAck("camtilt", false, "invalid pose: must be leaf or stem");
         }
@@ -412,40 +410,36 @@ void handleIncomingCommand(const String& line) {
     // ------------------------------------------------------------------------
     if (strcmp(cmd, "pump") == 0) {
         const char* id = doc["id"] | "";
-        if (strcmp(id, "water") != 0 && strcmp(id, "treat") != 0) {
+        PumpId pId = PumpId::NONE;
+        if (strcmp(id, "water") == 0) pId = PumpId::WATER;
+        else if (strcmp(id, "treat") == 0) pId = PumpId::TREATMENT;
+
+        if (pId == PumpId::NONE) {
             sendAck("pump", false, "invalid pump id: must be water or treat");
             return;
         }
 
         unsigned long requestedMs = doc["ms"] | 1000UL;
-        // Firmware hard cap per rule: "Pump time is capped in firmware, whatever the command says"
-        unsigned long actualMs = (requestedMs < RoverState::PUMP_MAX_CAP_MS) ? requestedMs : RoverState::PUMP_MAX_CAP_MS;
+        uint32_t maxCap = ConfigStore::instance().getPumpMaxCapMs();
+        unsigned long actualMs = (requestedMs < maxCap) ? requestedMs : maxCap;
 
-        state.pumpActive = true;
-        state.activePumpId = id;
-        state.pumpEndMs = millis() + actualMs;
-
-        // Hardware stub activation
-        if (strcmp(id, "water") == 0) {
-            digitalWrite(PIN_RELAY_WATER, HIGH);
+        if (PumpManager::instance().startPump(pId, actualMs)) {
+            sendAck("pump", true, "", "\"id\":\"" + String(id) + "\",\"ms\":" + String(actualMs));
         } else {
-            digitalWrite(PIN_RELAY_TREAT, HIGH);
+            sendAck("pump", false, "pump start failed");
         }
-
-        Serial.printf("[STUB] Pump started: %s for %lu ms (requested: %lu ms)\n", id, actualMs, requestedMs);
-        sendAck("pump", true, "", "\"id\":\"" + String(id) + "\",\"ms\":" + String(actualMs));
         return;
     }
 
     // ------------------------------------------------------------------------
-    // Command 12: CFG (k, v)
+    // Command 12: CFG (k, v) -> Saves calibrations and limits to NVS
     // ------------------------------------------------------------------------
     if (strcmp(cmd, "cfg") == 0) {
         const char* k = doc["k"] | "";
         const char* v = doc["v"] | "";
         if (strlen(k) > 0) {
-            state.configs[String(k)] = String(v);
-            Serial.printf("[CFG] Key '%s' set to '%s'\n", k, v);
+            ConfigStore::instance().setGeneric(String(k), String(v));
+            Serial.printf("[CFG] Saved to NVS: key='%s' val='%s'\n", k, v);
             sendAck("cfg", true, "", "\"k\":\"" + String(k) + "\",\"v\":\"" + String(v) + "\"");
         } else {
             sendAck("cfg", false, "missing key");
@@ -457,13 +451,14 @@ void handleIncomingCommand(const String& line) {
     // Command 13: SELFTEST
     // ------------------------------------------------------------------------
     if (strcmp(cmd, "selftest") == 0) {
-        Serial.println("[SELFTEST] Running hardware diagnostics stub...");
-        sendAck("selftest", true);
-        sendEvent("selftest_done", "\"pass\":true");
+        if (SelfTestRunner::instance().start()) {
+            sendAck("selftest", true);
+        } else {
+            sendAck("selftest", false, "selftest already running");
+        }
         return;
     }
 
-    // Unknown command fallback
     sendAck(cmd, false, "unrecognized command");
 }
 
@@ -473,74 +468,58 @@ void handleIncomingCommand(const String& line) {
 void broadcastTelemetry() {
     if (!state.isConnected) return;
 
-    // Simulate encoder tick increments if moving
-    if (state.isMoving) {
-        state.encL += state.speedL / 10;
-        state.encR += state.speedR / 10;
+    float bat = SensorManager::instance().getBatteryVoltage();
+    int soil = SensorManager::instance().getSoilPercent();
+    float temp = SensorManager::instance().getTemperatureC();
+    float hum = SensorManager::instance().getHumidityPct();
+    float tilt = ImuDriver::instance().getTiltDeg();
+    int dist = SensorManager::instance().getDistanceCm();
+    String probe = ProbeController::instance().getStateString();
+    long encL = EncoderDriver::instance().getTicksL();
+    long encR = EncoderDriver::instance().getTicksR();
+
+    // Check battery low cutoff
+    if (bat < 10.5f && bat > 5.0f && !state.isLowBat) {
+        state.isLowBat = true;
+        sendFault("LOW_BAT_CUTOFF");
     }
 
-    // {"t":"tel","bat":12.4,"mode":"idle","soil":42,"temp":24.5,"hum":58.0,"tilt":1.2,"dist":85,"probe":"up","enc":{"l":0,"r":0}}
+    // Check tilt limit safety (e.g. > 35 degrees)
+    if (tilt > 35.0f && !state.isFault) {
+        sendFault("TILT");
+    }
+
+    // Check obstacle proximity safety during forward motion
+    if (dist < 15 && MotorDriver::instance().getCurrentLeft() > 0 && !state.isFault) {
+        sendFault("OBSTACLE");
+    }
+
     String tel = "{\"t\":\"tel\"";
-    tel += ",\"bat\":" + String(state.batteryVoltage, 1);
+    tel += ",\"bat\":" + String(bat, 1);
     tel += ",\"mode\":\"" + String(modeToString(state.mode)) + "\"";
-    tel += ",\"soil\":" + String(state.soilMoisture);
-    tel += ",\"temp\":" + String(state.tempC, 1);
-    tel += ",\"hum\":" + String(state.humPct, 1);
-    tel += ",\"tilt\":" + String(state.tiltDeg, 1);
-    tel += ",\"dist\":" + String(state.distanceCm);
-    tel += ",\"probe\":\"" + state.probeState + "\"";
-    tel += ",\"enc\":{\"l\":" + String(state.encL) + ",\"r\":" + String(state.encR) + "}";
+    tel += ",\"soil\":" + String(soil);
+    tel += ",\"temp\":" + String(temp, 1);
+    tel += ",\"hum\":" + String(hum, 1);
+    tel += ",\"tilt\":" + String(tilt, 1);
+    tel += ",\"dist\":" + String(dist);
+    tel += ",\"probe\":\"" + probe + "\"";
+    tel += ",\"enc\":{\"l\":" + String(encL) + ",\"r\":" + String(encR) + "}";
     tel += "}";
 
     sendJson(tel);
 }
 
 // ============================================================================
-// BACKGROUND ASYNC TASK UPDATER (Pumps, Moves, Turns)
-// ============================================================================
-void updateActiveTasks() {
-    unsigned long now = millis();
-
-    // Pump timer expiration check
-    if (state.pumpActive && now >= state.pumpEndMs) {
-        digitalWrite(PIN_RELAY_WATER, LOW);
-        digitalWrite(PIN_RELAY_TREAT, LOW);
-        state.pumpActive = false;
-        Serial.printf("[STUB] Pump finished: %s\n", state.activePumpId.c_str());
-        sendEvent("pump_done", "\"id\":\"" + state.activePumpId + "\"");
-    }
-
-    // Move simulation timer expiration check
-    if (state.moveActive && now >= state.moveEndMs) {
-        state.moveActive = false;
-        state.isMoving = false;
-        state.encL += state.moveMm;
-        state.encR += state.moveMm;
-        Serial.printf("[STUB] Move arrived: %d mm\n", state.moveMm);
-        sendEvent("arrived", "\"mm\":" + String(state.moveMm));
-    }
-
-    // Turn simulation timer expiration check
-    if (state.turnActive && now >= state.turnEndMs) {
-        state.turnActive = false;
-        state.isMoving = false;
-        Serial.printf("[STUB] Turn arrived: %d deg\n", state.turnDeg);
-        sendEvent("arrived", "\"deg\":" + String(state.turnDeg));
-    }
-}
-
-// ============================================================================
 // HEARTBEAT WATCHDOG
-// "no message for 1000 ms while moving calls stop() and sends a fault event."
 // ============================================================================
 void checkHeartbeatWatchdog() {
     if (!state.isConnected) return;
 
     unsigned long now = millis();
     if (now - state.lastMessageMs > 1000) {
-        // If rover was in motion or pump was active, trigger HB_LOST fault
-        if (state.isMoving || state.pumpActive) {
-            Serial.println("[WATCHDOG] Heartbeat timeout (>1000ms) while moving! Calling stop() and sending fault.");
+        bool moving = MotorDriver::instance().isMoving() || MotionController::instance().isBusy() || PumpManager::instance().isRunning();
+        if (moving) {
+            Serial.println("[WATCHDOG] Heartbeat lost for >1000ms while moving! Stopping and raising HB_LOST fault.");
             stopAll("Heartbeat Watchdog Timeout");
             sendFault("HB_LOST");
         }
@@ -548,70 +527,112 @@ void checkHeartbeatWatchdog() {
 }
 
 // ============================================================================
-// SETUP & INITIALIZATION
+// CALLBACK REGISTRATIONS
+// ============================================================================
+void setupSubsystemCallbacks() {
+    // Probe events & fault
+    ProbeController::instance().setCallbacks(
+        [](const String& action, int value) {
+            if (action == "read") {
+                sendEvent("probe_done", "\"a\":\"read\",\"val\":" + String(value));
+            } else {
+                sendEvent("probe_done", "\"a\":\"" + action + "\"");
+            }
+        },
+        [](const String& faultCode) {
+            sendFault(faultCode);
+        }
+    );
+
+    // Pump completion event
+    PumpManager::instance().setCallback([](const String& pumpIdStr) {
+        sendEvent("pump_done", "\"id\":\"" + pumpIdStr + "\"");
+    });
+
+    // Motion arrived event
+    MotionController::instance().setCallback([](int traveledMm, int turnedDeg, bool isMove) {
+        state.isMoving = false;
+        if (isMove) {
+            sendEvent("arrived", "\"mm\":" + String(traveledMm));
+        } else {
+            sendEvent("arrived", "\"deg\":" + String(turnedDeg));
+        }
+    });
+
+    // Selftest completion event
+    SelfTestRunner::instance().setCallback([](bool pass, const String& detailsJson) {
+        sendEvent("selftest_done", "\"pass\":" + String(pass ? "true" : "false") + ",\"details\":" + detailsJson);
+    });
+}
+
+// ============================================================================
+// SETUP
 // ============================================================================
 void setup() {
     Serial.begin(115200);
-    delay(500);
-    Serial.println("\n==================================================");
-    Serial.println("  AgriRover ESP32 Main Controller Initializing...  ");
-    Serial.println("==================================================");
+    delay(400);
 
-    // Create FreeRTOS queue mutex
+    Serial.println("\n========================================================");
+    Serial.println("   AgriRover ESP32 Main Controller - Real Drivers Boot  ");
+    Serial.println("========================================================");
+
+    // 1. Initialize NVS Config Storage
+    ConfigStore::instance().init();
+
+    // 2. Initialize Shared I2C Bus (SDA: GPIO 21, SCL: GPIO 22)
+    Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL, 400000);
+
+    // 3. Initialize FreeRTOS synchronization mutex
     queueMutex = xSemaphoreCreateMutex();
 
-    // Initialize Pin Modes according to docs/pin_map.md
-    pinMode(PIN_MOTOR_L_ENA, OUTPUT);
-    pinMode(PIN_MOTOR_L_IN1, OUTPUT);
-    pinMode(PIN_MOTOR_L_IN2, OUTPUT);
-    pinMode(PIN_MOTOR_R_ENB, OUTPUT);
-    pinMode(PIN_MOTOR_R_IN3, OUTPUT);
-    pinMode(PIN_MOTOR_R_IN4, OUTPUT);
+    // 4. Initialize Hardware Subsystems
+    MotorDriver::instance().init();
+    EncoderDriver::instance().init();
+    ImuDriver::instance().init();
+    ServosPCA9685::instance().init();
+    SensorManager::instance().init();
+    ProbeController::instance().init();
+    PumpManager::instance().init();
+    MotionController::instance().init();
 
-    pinMode(PIN_RELAY_WATER, OUTPUT);
-    pinMode(PIN_RELAY_TREAT, OUTPUT);
+    // 5. Connect Subsystem Events
+    setupSubsystemCallbacks();
 
-    pinMode(PIN_LIMIT_PROBE_UP, INPUT_PULLUP);
-    pinMode(PIN_LIMIT_PROBE_DOWN, INPUT_PULLUP);
+    // 6. Optional E-Stop & GPS RX pins
     pinMode(PIN_ESTOP_SENSE, INPUT_PULLUP);
+    pinMode(PIN_GPS_RX, INPUT);
 
-    // Rule: All outputs OFF at boot
-    stopAll("Boot Initialization");
+    // Ensure all motors and actuators are initially idle
+    stopAll("Initial Boot");
 
-    // Initialize NimBLE Device
+    // 7. Initialize NimBLE Stack
     NimBLEDevice::init(BLE_DEVICE_NAME);
     NimBLEDevice::setPower(ESP_PWR_LVL_P9);
 
-    // Create BLE Server
     pServer = NimBLEDevice::createServer();
     pServer->setCallbacks(new ServerCallbacks());
 
-    // Create BLE Service
     NimBLEService* pService = pServer->createService(SERVICE_UUID);
 
-    // TX Characteristic (ESP32 -> Website, Notify)
     pTxChar = pService->createCharacteristic(
         CHAR_UUID_TX_NOTIFY,
         NIMBLE_PROPERTY::NOTIFY
     );
 
-    // RX Characteristic (Website -> ESP32, Write)
     pRxChar = pService->createCharacteristic(
         CHAR_UUID_RX_WRITE,
         NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR
     );
     pRxChar->setCallbacks(new RxCallbacks());
 
-    // Start BLE Service
     pService->start();
 
-    // Configure Advertising
     NimBLEAdvertising* pAdvertising = NimBLEDevice::getAdvertising();
     pAdvertising->addServiceUUID(SERVICE_UUID);
     pAdvertising->setName(BLE_DEVICE_NAME);
     pAdvertising->start();
 
-    Serial.println("[BLE] Advertising started as 'AgriRover'. Ready for connection.");
+    Serial.println("[BLE] Advertising started as 'AgriRover'. Ready for mission.");
 }
 
 // ============================================================================
@@ -632,19 +653,31 @@ void loop() {
         handleIncomingCommand(nextLine);
     }
 
-    // 2. Check Heartbeat Watchdog
+    // 2. Hardware Subsystem Non-Blocking Updates
+    MotorDriver::instance().update();
+    ImuDriver::instance().update();
+    ServosPCA9685::instance().update();
+    SensorManager::instance().update();
+    ProbeController::instance().update();
+    PumpManager::instance().update();
+    MotionController::instance().update();
+    SelfTestRunner::instance().update();
+
+    // 3. Hardware E-Stop pin sensing (active LOW if switch closed to GND)
+    if (digitalRead(PIN_ESTOP_SENSE) == LOW && !state.isEStop) {
+        state.isEStop = true;
+        sendFault("ESTOP");
+    }
+
+    // 4. Heartbeat Watchdog check (1000 ms)
     checkHeartbeatWatchdog();
 
-    // 3. Update active async tasks (pump duration, move, turn)
-    updateActiveTasks();
-
-    // 4. Send Telemetry at 5 Hz (every 200 ms)
+    // 5. Broadcast 5 Hz Telemetry (every 200 ms)
     unsigned long now = millis();
     if (now - state.lastTelemetryMs >= 200) {
         state.lastTelemetryMs = now;
         broadcastTelemetry();
     }
 
-    // Yield CPU time to FreeRTOS scheduler
     yield();
 }

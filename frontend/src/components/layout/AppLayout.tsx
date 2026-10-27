@@ -1,11 +1,39 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Outlet } from 'react-router-dom';
 import { TopBar } from './TopBar';
 import { Sidebar } from './Sidebar';
 import { BottomNav } from './BottomNav';
 import { BluetoothBanner } from './BluetoothBanner';
+import { useRoverStore } from '../../store/roverStore';
 
 export const AppLayout: React.FC = () => {
+  const { send, connectionStatus } = useRoverStore();
+
+  // Global Safety: Immediate motor/pump cutoff on tab hide, close, or navigation
+  useEffect(() => {
+    const handleSafeHalt = () => {
+      if (connectionStatus === 'connected') {
+        send({ c: 'stop' });
+      }
+    };
+
+    const handleVisibility = () => {
+      if (document.hidden && connectionStatus === 'connected') {
+        send({ c: 'stop' });
+      }
+    };
+
+    window.addEventListener('beforeunload', handleSafeHalt);
+    window.addEventListener('pagehide', handleSafeHalt);
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleSafeHalt);
+      window.removeEventListener('pagehide', handleSafeHalt);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [send, connectionStatus]);
+
   return (
     <div className="min-h-screen bg-app text-text-main flex flex-col font-sans transition-colors">
       <BluetoothBanner />

@@ -47,12 +47,34 @@ export const ManualPage: React.FC = () => {
   const { turningOffPending, pauseAuto } = useAutoModeStore();
 
   // Safety & Auto Lock State Evaluation
+  const FAULT_CODES = [
+    'PROBE_STUCK',
+    'LOW_BAT_CUTOFF',
+    'TILT',
+    'SLIP',
+    'HB_LOST',
+    'ESTOP',
+    'OBSTACLE',
+    'SENSOR_FAIL',
+    'HARDWARE_FAULT',
+  ];
+
   const isAutoRunning = mode === 'mission';
   const isDisconnected = connectionStatus !== 'connected';
-  const isEstop = mode === 'estop' || alerts.some((a) => a.code === 'ESTOP' && !a.acknowledged);
-  const isFault = mode === 'fault' || alerts.some((a) => a.code.startsWith('FAULT_') && !a.acknowledged);
+  const isEstop =
+    mode === 'estop' ||
+    telemetry?.mode === 'estop' ||
+    alerts.some((a) => a.code === 'ESTOP' && !a.acknowledged);
+  const isFault =
+    mode === 'fault' ||
+    telemetry?.mode === 'fault' ||
+    alerts.some(
+      (a) =>
+        (a.code.startsWith('FAULT') || FAULT_CODES.includes(a.code)) &&
+        !a.acknowledged
+    );
   const isLowBattery = Boolean(telemetry?.bat && (telemetry.bat.pct < 20 || telemetry.bat.low));
-  const isProbeUp = !telemetry || telemetry.probe === 'up';
+  const isProbeUp = telemetry ? telemetry.probe === 'up' : false;
 
   const isConfirmedSafe = !isDisconnected && !isEstop && !isFault && !isLowBattery && isProbeUp;
   const isManualLocked = isAutoRunning || turningOffPending || !isConfirmedSafe;
@@ -165,9 +187,13 @@ export const ManualPage: React.FC = () => {
     };
 
     window.addEventListener('blur', handleBlur);
+    window.addEventListener('beforeunload', handleBlur);
+    window.addEventListener('pagehide', handleBlur);
     document.addEventListener('visibilitychange', handleVisibility);
     return () => {
       window.removeEventListener('blur', handleBlur);
+      window.removeEventListener('beforeunload', handleBlur);
+      window.removeEventListener('pagehide', handleBlur);
       document.removeEventListener('visibilitychange', handleVisibility);
       stopDriving();
     };

@@ -105,7 +105,34 @@ export const useRoverStore = create<RoverState>((set, get) => {
   // Setup listener bridges
   const setupTransportListeners = (t: RoverTransport) => {
     t.onStatusChange((status, error) => {
+      const prevStatus = get().connectionStatus;
       set({ connectionStatus: status, connectionError: error || null });
+
+      if (status === 'disconnected' || status === 'error') {
+        // Clear telemetry & reset rover active state on disconnect
+        set({
+          telemetry: null,
+          lastTelemetryTime: null,
+          probeMoistureResult: null,
+          latestAck: null,
+          mode: 'idle',
+          currentTask: 'Disconnected from rover',
+        });
+
+        // If previously connected or failed with error, log explicit safety alert
+        if (prevStatus === 'connected' || status === 'error') {
+          const disconnectAlert: AlertEntry = {
+            id: Math.random().toString(36).substring(2, 9),
+            code: 'BLE_DISCONNECT',
+            message: error
+              ? `Bluetooth connection lost: ${error}. Rover halted.`
+              : 'Bluetooth connection lost. Rover stopped.',
+            timestamp: new Date(),
+            acknowledged: false,
+          };
+          set((state) => ({ alerts: [disconnectAlert, ...state.alerts] }));
+        }
+      }
     });
 
     t.onMessage((msg: RoverInMessage) => {
@@ -162,11 +189,11 @@ export const useRoverStore = create<RoverState>((set, get) => {
         set({ latestAck: ackData });
 
         if (!msg.ok && msg.reason) {
-          // Also register refused command in alerts
+          // Also register refused command in alerts with detailed reason
           const refusedAlert: AlertEntry = {
             id: Math.random().toString(36).substring(2, 9),
             code: 'CMD_REFUSED',
-            message: `Command '${msg.c}' refused: ${msg.reason}`,
+            message: `Command '${msg.c}' refused by rover: ${msg.reason}`,
             timestamp: now,
             acknowledged: false,
           };
@@ -188,10 +215,25 @@ export const useRoverStore = create<RoverState>((set, get) => {
         };
         set((state) => ({ alerts: [newAlert, ...state.alerts] }));
       } else if (msg.t === 'fault') {
+        // Detailed fault messages for all safety codes
+        const faultDescriptions: Record<string, string> = {
+          PROBE_STUCK: 'Soil probe limit switch timeout: probe could not retract UP. Motion disabled.',
+          LOW_BAT_CUTOFF: 'Battery voltage dropped below critical cutoff (11.2V). Motors and pumps halted.',
+          TILT: 'Chassis inclination exceeded safety limit (> 22.5°). Rover stopped to prevent rollover.',
+          SLIP: 'Wheel traction slip detected: drive encoders turning without vehicle motion.',
+          HB_LOST: 'Heartbeat timeout: BLE communication silence exceeded 1000 ms. Rover stopped.',
+          ESTOP: 'Emergency stop engaged: all actuators and pumps disabled.',
+          OBSTACLE: 'Front obstacle detected within safety cutoff threshold.',
+          SENSOR_FAIL: 'Critical sensor hardware failure (IMU or ADC bus dropped).',
+        };
+
+        const descriptiveMsg =
+          faultDescriptions[msg.code] || `Rover hardware fault: ${msg.code}`;
+
         const newFaultAlert: AlertEntry = {
           id: Math.random().toString(36).substring(2, 9),
           code: msg.code,
-          message: `Rover Fault: ${msg.code}`,
+          message: descriptiveMsg,
           timestamp: now,
           acknowledged: false,
         };

@@ -8,6 +8,9 @@
         {
             "name": "PlatformIO",
             "includePath": [
+                "C:/Users/ARYAN/OneDrive/Desktop/AgriRover yantravedha/firmware/src",
+                "C:/Users/ARYAN/OneDrive/Desktop/AgriRover yantravedha/firmware/.pio/libdeps/esp32dev/NimBLE-Arduino/src",
+                "C:/Users/ARYAN/OneDrive/Desktop/AgriRover yantravedha/firmware/.pio/libdeps/esp32dev/ArduinoJson/src",
                 "C:/Users/ARYAN/OneDrive/Desktop/AgriRover yantravedha/firmware_cam/src",
                 "C:/Users/ARYAN/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src",
                 "C:/Users/ARYAN/.platformio/packages/framework-arduinoespressif32/libraries/WebServer/src",

@@ -1,0 +1,7 @@
+{
+  "leaf_healthy": "leaf",
+  "leaf_diseased": "leaf",
+  "stem_healthy": "stem",
+  "stem_diseased": "stem",
+  "background": "none"
+}

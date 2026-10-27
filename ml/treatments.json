@@ -1,0 +1,4 @@
+{
+  "leaf_diseased": { "treatment": "<CONFIRM WITH EXPERT>", "dose_ml": null, "severity": "medium" },
+  "stem_diseased": { "treatment": "<CONFIRM WITH EXPERT>", "dose_ml": null, "severity": "high" }
+}

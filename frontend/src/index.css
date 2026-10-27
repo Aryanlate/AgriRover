@@ -1,0 +1,78 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-app: #F4F7F2;
+  --surface: #FFFFFF;
+  --text-main: #17261D;
+  --text-muted: #4F6256;
+  --border-subtle: #D5DDD3;
+  --primary-green: #2E7D4F;
+  --status-danger: #C62828;
+  --status-warning: #B26A00;
+  --water-blue: #1E6FB8;
+  --treated-purple: #7B4FB3;
+  --unsure-amber: #B88700;
+}
+
+.dark {
+  --bg-app: #0F1714;
+  --surface: #18231E;
+  --text-main: #E5EEE8;
+  --text-muted: #A3B5AA;
+  --border-subtle: #2B3A32;
+  --primary-green: #5FBF86;
+  --status-danger: #FF7A72;
+  --status-warning: #F2B84B;
+  --water-blue: #6DB4F2;
+  --treated-purple: #B79DF0;
+  --unsure-amber: #E3B341;
+}
+
+/* Explicit scopes for side-by-side theme review */
+.theme-light {
+  --bg-app: #F4F7F2;
+  --surface: #FFFFFF;
+  --text-main: #17261D;
+  --text-muted: #4F6256;
+  --border-subtle: #D5DDD3;
+  --primary-green: #2E7D4F;
+  --status-danger: #C62828;
+  --status-warning: #B26A00;
+  --water-blue: #1E6FB8;
+  --treated-purple: #7B4FB3;
+  --unsure-amber: #B88700;
+  color-scheme: light;
+}
+
+.theme-dark {
+  --bg-app: #0F1714;
+  --surface: #18231E;
+  --text-main: #E5EEE8;
+  --text-muted: #A3B5AA;
+  --border-subtle: #2B3A32;
+  --primary-green: #5FBF86;
+  --status-danger: #FF7A72;
+  --status-warning: #F2B84B;
+  --water-blue: #6DB4F2;
+  --treated-purple: #B79DF0;
+  --unsure-amber: #E3B341;
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background-color: var(--bg-app);
+  color: var(--text-main);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Ensure no gratuitous animations for low-latency rugged greenhouse operation */
+* {
+  transition-property: color, background-color, border-color;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}

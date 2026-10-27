@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "*.h": "cpp"
+    },
+    "C_Cpp.default.cppStandard": "gnu++20",
+    "C_Cpp.default.cStandard": "gnu17"
+}

@@ -1,0 +1,28 @@
+# Agri-Rover YOLOv8n-cls Training Configuration
+# Model & Dataset
+model: yolov8n-cls.pt
+data: ml/dataset
+imgsz: 224
+epochs: 50
+patience: 10
+batch: 16
+workers: 2 # safe default across Windows and Linux
+device: null # null for auto-detect (CUDA if available, else CPU)
+optimizer: auto
+lr0: 0.001
+
+# Augmentation Parameters (brightness, blur, rotation, flip, scale)
+degrees: 15.0         # Rotation (+/- 15 degrees)
+fliplr: 0.5           # Horizontal flip probability
+flipud: 0.5           # Vertical flip probability
+scale: 0.2            # Scale gain (+/- 20%)
+hsv_v: 0.4            # Brightness (HSV-Value gain)
+hsv_s: 0.3            # Saturation (HSV-Saturation gain)
+hsv_h: 0.015          # Hue (HSV-Hue gain)
+auto_augment: randaugment # RandAugment includes blur, sharpness, and color jitter
+erasing: 0.1          # Random erasing
+
+# Output directories
+project: ml/runs
+name: agrirover_cls
+exist_ok: true

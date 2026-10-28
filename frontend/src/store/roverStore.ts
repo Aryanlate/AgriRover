@@ -367,6 +367,12 @@ export const useRoverStore = create<RoverState>((set, get) => {
 
     resetEstop: async () => {
       const { send } = get();
+      set((state) => ({
+        mode: state.mode === 'estop' ? 'idle' : state.mode,
+        alerts: state.alerts.map((a) =>
+          a.code === 'ESTOP' ? { ...a, acknowledged: true } : a
+        ),
+      }));
       return send({ c: 'estop_reset' });
     },
 

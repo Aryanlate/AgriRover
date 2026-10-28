@@ -41,6 +41,7 @@ export const ManualPage: React.FC = () => {
     send,
     mode,
     setMode,
+    resetEstop,
     latestAck,
     probeMoistureResult,
     alerts,
@@ -511,7 +512,7 @@ export const ManualPage: React.FC = () => {
               <Button
                 variant="secondary"
                 size="md"
-                onClick={() => send({ c: 'estop_reset' })}
+                onClick={() => resetEstop()}
                 icon={<RotateCcw className="w-4 h-4" />}
               >
                 Reset E-Stop

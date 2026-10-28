@@ -10,7 +10,6 @@ import {
   Lightbulb,
   LightbulbOff,
   RefreshCw,
-  SearchX,
   Sliders,
   Sparkles,
   WifiOff,
@@ -70,9 +69,6 @@ export const CameraPage: React.FC = () => {
     return {
       leaf_healthy: 38,
       leaf_diseased: 45,
-      stem_healthy: 22,
-      stem_diseased: 19,
-      background: 40,
     };
   });
 
@@ -178,16 +174,6 @@ export const CameraPage: React.FC = () => {
     if (!scanResult) return null;
     const rawState = scanResult.result.state;
     const conf = scanResult.result.confidence;
-
-    if (rawState === 'no_plant') {
-      return {
-        label: 'No Plant',
-        type: 'no_plant' as const,
-        color: 'text-text-muted bg-surface border-border',
-        icon: SearchX,
-        description: 'Background detected. No plant foliage found.',
-      };
-    }
 
     if (rawState === 'healthy') {
       return {
@@ -656,9 +642,6 @@ export const CameraPage: React.FC = () => {
                   >
                     <option value="leaf_healthy">Leaf Healthy</option>
                     <option value="leaf_diseased">Leaf Diseased</option>
-                    <option value="stem_healthy">Stem Healthy</option>
-                    <option value="stem_diseased">Stem Diseased</option>
-                    <option value="background">Background (No plant)</option>
                   </select>
                 </div>
 
@@ -773,13 +756,10 @@ export const CameraPage: React.FC = () => {
               Single-Click Class Capture (Auto-Tilts Camera & Ingests to Inbox)
             </h3>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {[
                 { id: 'leaf_healthy', label: 'Leaf Healthy', pose: 'Leaf', target: 150 },
                 { id: 'leaf_diseased', label: 'Leaf Diseased', pose: 'Leaf', target: 150 },
-                { id: 'stem_healthy', label: 'Stem Healthy', pose: 'Stem', target: 150 },
-                { id: 'stem_diseased', label: 'Stem Diseased', pose: 'Stem', target: 150 },
-                { id: 'background', label: 'Background', pose: 'None', target: 100 },
               ].map((item) => {
                 const count = classCounts[item.id] || 0;
                 const isUnder = count < item.target;

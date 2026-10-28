@@ -7,7 +7,6 @@ import {
   CheckCircle2,
   AlertTriangle,
   HelpCircle,
-  SearchX,
   RefreshCw,
   ExternalLink,
   Tag,
@@ -28,7 +27,7 @@ export interface ScannedImageItem {
   runName?: string;
   pose: 'leaf' | 'stem' | string;
   filePath: string;
-  state: 'healthy' | 'diseased' | 'unsure' | 'no_plant' | string;
+  state: 'healthy' | 'diseased' | 'unsure' | string;
   confidence: number;
   className: string;
   createdAt: string;
@@ -196,10 +195,10 @@ export const ResultsPage: React.FC = () => {
             runId: 2,
             runName: 'Afternoon Bed B Verification',
             pose: 'leaf',
-            filePath: 'uploads/images/empty_b4.jpg',
-            state: 'no_plant',
-            confidence: 0.99,
-            className: 'background',
+            filePath: 'uploads/images/leaf_b4.jpg',
+            state: 'healthy',
+            confidence: 0.94,
+            className: 'leaf_healthy',
             createdAt: new Date(Date.now() - 900000).toISOString(),
           },
           {
@@ -240,7 +239,6 @@ export const ResultsPage: React.FC = () => {
       if (filterResult === 'diseased' && item.state !== 'diseased') return false;
       if (filterResult === 'healthy' && item.state !== 'healthy') return false;
       if (filterResult === 'unsure' && item.state !== 'unsure') return false;
-      if (filterResult === 'no_plant' && item.state !== 'no_plant') return false;
     }
     // Run filter
     if (filterRun !== 'all' && String(item.runId) !== filterRun) return false;
@@ -380,7 +378,6 @@ export const ResultsPage: React.FC = () => {
               <option value="healthy">Healthy Only</option>
               <option value="diseased">Diseased Only</option>
               <option value="unsure">Unsure (Low Confidence)</option>
-              <option value="no_plant">No Plant (Empty/Background)</option>
             </select>
           </div>
 
@@ -454,7 +451,6 @@ export const ResultsPage: React.FC = () => {
             const isDiseased = item.state === 'diseased';
             const isHealthy = item.state === 'healthy';
             const isUnsure = item.state === 'unsure';
-            const isNoPlant = item.state === 'no_plant';
 
             const badgeBorder = isDiseased
               ? 'border-danger/50 text-danger bg-danger/10'
@@ -511,7 +507,6 @@ export const ResultsPage: React.FC = () => {
                         {isHealthy && <CheckCircle2 className="w-3.5 h-3.5" />}
                         {isDiseased && <AlertTriangle className="w-3.5 h-3.5" />}
                         {isUnsure && <HelpCircle className="w-3.5 h-3.5" />}
-                        {isNoPlant && <SearchX className="w-3.5 h-3.5" />}
                         <span>{item.state}</span>
                       </div>
                       <span className="tabular-nums">{(item.confidence * 100).toFixed(0)}%</span>
@@ -609,9 +604,6 @@ export const ResultsPage: React.FC = () => {
                 >
                   <option value="leaf_healthy">leaf_healthy</option>
                   <option value="leaf_diseased">leaf_diseased</option>
-                  <option value="stem_healthy">stem_healthy</option>
-                  <option value="stem_diseased">stem_diseased</option>
-                  <option value="background">background</option>
                 </select>
               </div>
 

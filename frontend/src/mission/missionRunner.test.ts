@@ -197,25 +197,16 @@ describe('MissionRunner Unit Tests', () => {
     expect(sent.some((m: RoverOutMessage) => m.c === 'pump')).toBe(false);
   });
 
-  it('no plant found: retries once, then skips without spraying', async () => {
+  it('healthy leaf: scans once and does not spray, no retry', async () => {
     const transport = createMockTransport();
     const scanMock = vi.fn().mockImplementation(async (pose: string) => {
-      return { result: { part: pose, state: 'no_plant', confidence: 0.90 } };
+      return { result: { part: pose, state: 'healthy', confidence: 0.95 } };
     });
 
-    let callCount = 0;
     const decideMock = vi.fn().mockImplementation(async () => {
-      callCount++;
-      if (callCount === 1) {
-        return {
-          actions: [],
-          skipped_actions: [{ type: 'all', reason: 'no plant detected, retrying' }],
-          retry_needed: true,
-        };
-      }
       return {
         actions: [],
-        skipped_actions: [{ type: 'skip', reason: 'no plant confirmed on retry' }],
+        skipped_actions: [{ type: 'treat', part: 'leaf', reason: 'healthy: no action needed' }],
         retry_needed: false,
       };
     });
@@ -232,9 +223,8 @@ describe('MissionRunner Unit Tests', () => {
 
     await runner.start(baseConfig);
 
-    expect(decideMock).toHaveBeenCalledTimes(2);
-    // Leaf should be scanned twice (initial + retry) = 2 scan calls in leaf-only mode
-    expect(scanMock).toHaveBeenCalledTimes(2);
+    expect(decideMock).toHaveBeenCalledTimes(1);
+    expect(scanMock).toHaveBeenCalledTimes(1);
 
     const snapshot = runner.getSnapshot();
     expect(snapshot.status).toBe('completed');

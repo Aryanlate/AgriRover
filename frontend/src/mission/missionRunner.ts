@@ -342,38 +342,15 @@ export class MissionRunner {
         // 5. Step: Decision Engine (Leaf results only)
         this.subStep = 'deciding';
         this.notify();
-        let retryCount = 0;
-        let decision = await this.deps.apiClient.decide({
+        const decision = await this.deps.apiClient.decide({
           moisture_pct: moisturePct,
           leaf_result: leafScan?.result,
           tank_estimates: { water_ml: this.waterRemainingMl, treatment_ml: this.treatRemainingMl },
           battery_status: tel?.bat,
           estop: false,
-          retry_count: retryCount,
           plant_id: plantLabel,
           run_id: this.backendRunId ?? undefined,
         });
-
-        // Retry rule: if no plant found and retry flag set, retry once
-        if (decision.retry_needed && retryCount === 0) {
-          retryCount = 1;
-          this.subStep = 'scanning_leaf';
-          this.notify();
-          await this.deps.transport.send({ c: 'camtilt', pose: 'leaf' });
-          await this.sleep(400);
-          leafScan = await this.deps.apiClient.scan('leaf', plantLabel, this.backendRunId ?? undefined);
-
-          decision = await this.deps.apiClient.decide({
-            moisture_pct: moisturePct,
-            leaf_result: leafScan?.result,
-            tank_estimates: { water_ml: this.waterRemainingMl, treatment_ml: this.treatRemainingMl },
-            battery_status: tel?.bat,
-            estop: false,
-            retry_count: retryCount,
-            plant_id: plantLabel,
-            run_id: this.backendRunId ?? undefined,
-          });
-        }
         if (!(await this.waitIfPaused())) break;
 
         // 7. Step: Aim Nozzle & Dispense Spray Actions

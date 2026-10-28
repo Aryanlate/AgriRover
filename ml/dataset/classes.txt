@@ -1,3 +1,2 @@
 leaf_healthy
 leaf_diseased
-background

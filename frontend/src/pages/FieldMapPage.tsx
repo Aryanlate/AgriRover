@@ -10,7 +10,6 @@ import {
   Droplets,
   Sparkles,
   HelpCircle,
-  SearchX,
   Target,
 } from 'lucide-react';
 import { apiClient } from '../services/api/client';
@@ -81,7 +80,6 @@ export const FieldMapPage: React.FC = () => {
           else if (s === 'needs water' || s === 'needs_water') normalizedStatus = 'needs water';
           else if (s === 'treated') normalizedStatus = 'treated';
           else if (s === 'unsure') normalizedStatus = 'unsure';
-          else if (s === 'no plant found' || s === 'no_plant') normalizedStatus = 'no plant found';
 
           return {
             id: p.id,
@@ -118,7 +116,7 @@ export const FieldMapPage: React.FC = () => {
               if (pNum === 1) { status = 'healthy'; moisture = 48; }
               else if (pNum === 2) { status = 'unsure'; moisture = 36; confidence = 0.62; }
               else if (pNum === 3) { status = 'healthy'; moisture = 42; }
-              else if (pNum === 4) { status = 'no plant found'; }
+              else if (pNum === 4) { status = 'healthy'; moisture = 44; }
               else { status = 'healthy'; moisture = 46; }
             } else {
               status = 'not scanned';
@@ -131,7 +129,7 @@ export const FieldMapPage: React.FC = () => {
               rowLetter,
               plantNumber: pNum,
               status,
-              moisture: status !== 'no plant found' && status !== 'not scanned' ? moisture : undefined,
+              moisture: status !== 'not scanned' ? moisture : undefined,
               confidence: confidence,
             });
             idCounter++;
@@ -343,16 +341,6 @@ export const FieldMapPage: React.FC = () => {
             }`}
           >
             Not Scanned ({countByStatus('not scanned')})
-          </button>
-          <button
-            onClick={() => setSelectedFilter('no plant found')}
-            className={`px-2 py-1.5 rounded-lg text-xs font-bold border transition-colors flex items-center gap-1 ${
-              selectedFilter === 'no plant found'
-                ? 'bg-text-muted text-surface border-text-muted'
-                : 'bg-app text-text-muted border-border hover:bg-surface'
-            }`}
-          >
-            <SearchX className="w-3.5 h-3.5" /> Empty Spot ({countByStatus('no plant found')})
           </button>
         </div>
       </div>

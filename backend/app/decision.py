@@ -1,15 +1,14 @@
 """
-Decision Engine:
+Decision Engine (Two-Class Only: leaf_healthy and leaf_diseased):
 Pure functions with no I/O for agricultural rover operations.
 Unit tested with pytest.
 
 Rules:
 1. Water if moisture < threshold (dose capped).
-2. Use leaf results only. Treat (tank 2) if leaf state is diseased at or above high confidence,
-   aiming at the leaf target using treatment from treatments.json ("leaf_diseased").
-3. Leaf diseased between low and high confidence is unsure and never sprayed.
-4. Leaf healthy = no action.
-5. Leaf no_plant = no_plant_found with a retry flag (retry once, then skip).
+2. Use leaf results only. Since there is no background class, a result is never "no plant found" and no retry is used.
+3. Treat (tank 2) if leaf state is diseased at or above high confidence, aiming at the leaf target.
+4. Diseased between low and high confidence is unsure and never sprayed.
+5. Everything else (healthy, low confidence) is no action.
 6. Block all spraying if battery low, tank estimate low, or E-stop active.
 7. Enforce per-plant and per-run dose caps for both water and treatments.
 8. Always provide a clear reason for every skipped action.
@@ -61,7 +60,7 @@ def evaluate_decision(
     dose_caps: Optional[Dict[str, float]] = None
 ) -> Dict[str, Any]:
     """
-    Pure decision evaluation function using leaf results only.
+    Pure decision evaluation function for two-class leaf system.
     Returns:
     {
         "ok": bool,
@@ -74,7 +73,7 @@ def evaluate_decision(
     """
     actions: List[Dict[str, Any]] = []
     skipped_actions: List[Dict[str, Any]] = []
-    retry_needed = False
+    retry_needed = False  # No retry since there is no background / no_plant state
 
     treatments_map = treatments or {}
 
@@ -172,7 +171,7 @@ def evaluate_decision(
             run_watered += water_dose
 
     # ----------------------------------------------------
-    # 2. VISION / TREATMENT DECISION (LEAF RESULTS ONLY)
+    # 2. VISION / TREATMENT DECISION (TWO-CLASS LEAF ONLY)
     # ----------------------------------------------------
     if not leaf_result:
         skipped_actions.append({
@@ -192,23 +191,7 @@ def evaluate_decision(
                 "reason": "Leaf is healthy: no action needed"
             })
 
-        # Case B: no_plant / background -> retry once, then skip
-        elif state == "no_plant":
-            if retry_count == 0:
-                retry_needed = True
-                skipped_actions.append({
-                    "type": "no_plant_found",
-                    "part": "leaf",
-                    "reason": "No plant detected on leaf scan: retry once"
-                })
-            else:
-                skipped_actions.append({
-                    "type": "no_plant_found",
-                    "part": "leaf",
-                    "reason": "No plant detected on leaf scan after retry: skipping plant"
-                })
-
-        # Case C: diseased -> evaluate confidence
+        # Case B: diseased -> evaluate confidence thresholds
         elif state == "diseased":
             if confidence < low_confidence:
                 skipped_actions.append({
@@ -285,10 +268,11 @@ def evaluate_decision(
                     plant_treated += treat_dose
                     run_treated += treat_dose
         else:
+            # Everything else is no action
             skipped_actions.append({
                 "type": "treat",
                 "part": "leaf",
-                "reason": f"Unknown classification state '{state}' for leaf"
+                "reason": f"No action required for state '{state}'"
             })
 
     # Summary and status
@@ -302,9 +286,6 @@ def evaluate_decision(
     elif "water" in action_types:
         overall_status = "water_only"
         summary = "Scheduled soil watering."
-    elif retry_needed:
-        overall_status = "retry_needed"
-        summary = "No plant detected. Retry scan scheduled."
     elif estop or battery_low:
         overall_status = "blocked_safety"
         summary = "Actions blocked due to safety state (E-stop or low battery)."
@@ -316,7 +297,7 @@ def evaluate_decision(
         "ok": True,
         "actions": actions,
         "skipped_actions": skipped_actions,
-        "retry_needed": retry_needed,
+        "retry_needed": False,
         "overall_status": overall_status,
         "summary": summary
     }

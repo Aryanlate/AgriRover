@@ -1,10 +1,10 @@
 """
-Unit tests for app/decision.py covering every leaf-only rule:
+Unit tests for app/decision.py covering two-class leaf-only rules:
 1. Water if moisture < threshold (dose capped).
 2. Use leaf results only: treat if state is diseased at or above high confidence (aimed at leaf).
 3. Diseased between low and high is unsure and never sprayed.
 4. Healthy = no action.
-5. no_plant / background = no_plant_found with a retry flag (retry once, then skip).
+5. Two-class only: no background or no_plant state, no retry.
 6. Block all spraying if battery low, tank estimate low, or E-stop.
 7. Per-plant and per-run dose caps.
 8. Always give a reason for every skipped action.
@@ -172,12 +172,12 @@ def test_healthy_is_no_action():
     assert "healthy: no action needed" in skipped_leaf["reason"]
 
 
-def test_no_plant_retry_flag_retry_once_then_skip():
-    """Rule 5: no_plant (background) = no_plant_found with a retry flag (retry once, then skip)."""
-    leaf_res = {"part": "leaf", "state": "no_plant", "confidence": 0.90}
+def test_no_plant_state_removed_and_never_retries():
+    """Rule 5: Two-class only. There is no background / no_plant state and no retry."""
+    # Even if an external caller passes a non-diseased state or retry_count, retry_needed is always False
+    leaf_res = {"part": "leaf", "state": "healthy", "confidence": 0.90}
 
-    # Initial scan (retry_count == 0) -> should flag retry_needed = True
-    res_initial = evaluate_decision(
+    res = evaluate_decision(
         moisture_pct=50.0,
         thresholds=DEFAULT_THRESHOLDS,
         leaf_result=leaf_res,
@@ -186,23 +186,10 @@ def test_no_plant_retry_flag_retry_once_then_skip():
         treatments=SAMPLE_TREATMENTS,
         retry_count=0
     )
-    assert res_initial["retry_needed"] is True
-    skipped_initial = next(s for s in res_initial["skipped_actions"] if s["type"] == "no_plant_found")
-    assert "retry once" in skipped_initial["reason"]
-
-    # Subsequent scan after retry (retry_count == 1) -> retry_needed = False, skip
-    res_retried = evaluate_decision(
-        moisture_pct=50.0,
-        thresholds=DEFAULT_THRESHOLDS,
-        leaf_result=leaf_res,
-        low_confidence=0.60,
-        high_confidence=0.85,
-        treatments=SAMPLE_TREATMENTS,
-        retry_count=1
-    )
-    assert res_retried["retry_needed"] is False
-    skipped_retried = next(s for s in res_retried["skipped_actions"] if s["type"] == "no_plant_found")
-    assert "skipping plant" in skipped_retried["reason"]
+    assert res["retry_needed"] is False
+    assert len(res["actions"]) == 0
+    skipped_leaf = next(s for s in res["skipped_actions"] if s["part"] == "leaf")
+    assert "healthy: no action needed" in skipped_leaf["reason"]
 
 
 def test_estop_blocks_all_spraying():

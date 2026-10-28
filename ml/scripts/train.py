@@ -21,34 +21,7 @@ def load_config(config_path: Path) -> dict:
         return yaml.safe_load(f)
 
 
-def sync_background_class(data_dir: Path):
-    """If ml/dataset/raw/public/my_images/background/ has images, include it as the background class."""
-    raw_bg = data_dir / "raw" / "public" / "my_images" / "background"
-    if not raw_bg.exists():
-        return
-    valid_exts = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
-    raw_bg_imgs = [p for p in raw_bg.iterdir() if p.is_file() and p.suffix.lower() in valid_exts]
-    if not raw_bg_imgs:
-        return
-
-    import shutil
-    train_bg = data_dir / "train" / "background"
-    val_bg = data_dir / "val" / "background"
-    train_bg.mkdir(parents=True, exist_ok=True)
-    val_bg.mkdir(parents=True, exist_ok=True)
-
-    existing_train = [p for p in train_bg.iterdir() if p.is_file() and p.suffix.lower() in valid_exts]
-    if not existing_train:
-        split_idx = max(1, int(len(raw_bg_imgs) * 0.8))
-        for img in raw_bg_imgs[:split_idx]:
-            shutil.copy2(img, train_bg / img.name)
-        for img in raw_bg_imgs[split_idx:]:
-            shutil.copy2(img, val_bg / img.name)
-        print(f"[INFO] Included {len(raw_bg_imgs)} background images from {raw_bg} into background class splits.")
-
-
 def check_dataset(data_dir: Path) -> tuple[int, int]:
-    sync_background_class(data_dir)
     train_dir = data_dir / "train"
     val_dir = data_dir / "val"
     if not train_dir.exists() or not val_dir.exists():
@@ -143,7 +116,7 @@ def main():
     if train_count == 0:
         print("\n[ERROR] Training split has 0 images.")
         print("Please place images into `ml/dataset/train/<class>/` before running training.")
-        print("Classes: leaf_healthy, leaf_diseased (and optional background).")
+        print("Classes: leaf_healthy, leaf_diseased.")
         sys.exit(1)
 
     overrides = {

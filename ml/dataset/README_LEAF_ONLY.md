@@ -1,6 +1,6 @@
-# Leaf-Only Dataset Preparation Guide
+# Two-Class Leaf Dataset Preparation Guide
 
-This guide describes how to populate and prepare the leaf-only image dataset for Agri-Rover.
+This guide describes how to populate and prepare the two-class (`leaf_healthy` and `leaf_diseased`) image dataset for Agri-Rover. There is no background class.
 
 ---
 
@@ -16,10 +16,6 @@ Place your raw image files (`.jpg`, `.jpeg`, `.png`) into their respective subfo
   `ml/dataset/raw/public/my_images/leaf_diseased/`
   *(Photos of leaves displaying disease symptoms, spots, blight, or powdery mildew)*
 
-- **Background / Non-Plant (Optional)**:
-  `ml/dataset/raw/public/my_images/background/`
-  *(Photos of empty greenhouse soil, walkways, pipes, pots, or greenhouse structures)*
-
 > Note: Non-image files like `.gitkeep` are automatically ignored.
 
 ---
@@ -32,7 +28,7 @@ Execute the following commands sequentially from the project root directory:
 ```bash
 python ml/scripts/import_public.py
 ```
-- Reads from `ml/dataset/raw/public/my_images/`.
+- Reads from `ml/dataset/raw/public/my_images/leaf_healthy` and `leaf_diseased`.
 - Resizes images so the longest dimension is 640 px (aspect ratio preserved).
 - Sets `plant=unknown` and `source=other`.
 - Copies processed files to `ml/dataset/staging/<class>/`.
@@ -48,7 +44,7 @@ python ml/scripts/dataset_status.py
 ```bash
 python ml/scripts/preview_samples.py
 ```
-- Generates sample previews to verify image quality and correct class folder placement.
+- Generates sample preview contact sheets for `leaf_healthy` and `leaf_diseased`.
 
 ### Step 4: Split into Train, Val, and Test Sets
 ```bash
@@ -56,7 +52,7 @@ python ml/scripts/split_dataset.py
 ```
 - Deduplicates images before splitting.
 - Splits staging images into `ml/dataset/train/`, `ml/dataset/val/`, and `ml/dataset/test/` (e.g. 70% / 15% / 15%).
-- Operates on the 3 leaf-only classes (`leaf_healthy`, `leaf_diseased`, `background`).
+- Operates on the 2 classes (`leaf_healthy`, `leaf_diseased`).
 - Displays a warning that the test set is derived from public photos, not physical ESP32-CAM photos.
 
 ### Step 5: Verify Dataset Integrity

@@ -21,8 +21,7 @@ DEST_LABELS = MODELS_DIR / "labels.json"
 # Mapping each class to its part (leaf or none)
 CLASS_PARTS = {
     "leaf_healthy": "leaf",
-    "leaf_diseased": "leaf",
-    "background": "none"
+    "leaf_diseased": "leaf"
 }
 
 

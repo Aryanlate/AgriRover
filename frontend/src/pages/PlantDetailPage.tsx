@@ -741,9 +741,6 @@ export const PlantDetailPage: React.FC = () => {
                 >
                   <option value="leaf_healthy">leaf_healthy</option>
                   <option value="leaf_diseased">leaf_diseased</option>
-                  <option value="stem_healthy">stem_healthy</option>
-                  <option value="stem_diseased">stem_diseased</option>
-                  <option value="background">background</option>
                 </select>
               </div>
 

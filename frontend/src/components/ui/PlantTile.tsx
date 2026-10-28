@@ -7,7 +7,6 @@ import {
   AlertTriangle,
   Sparkles,
   HelpCircle as QuestionIcon,
-  SearchX,
   Navigation,
 } from 'lucide-react';
 import { Card } from './Card';
@@ -19,8 +18,7 @@ export type PlantStatus =
   | 'watered'
   | 'disease'
   | 'treated'
-  | 'unsure'
-  | 'no plant found';
+  | 'unsure';
 
 export interface PlantTileProps {
   id?: string | number;
@@ -98,13 +96,6 @@ export const PlantTile: React.FC<PlantTileProps> = ({
       borderColor: 'border-unsure/50',
       badgeClass: 'bg-surface text-unsure border-unsure/40',
       accentColor: 'text-unsure',
-    },
-    'no plant found': {
-      label: 'No Plant Found',
-      icon: SearchX,
-      borderColor: 'border-border',
-      badgeClass: 'bg-app text-text-muted border-border',
-      accentColor: 'text-text-muted',
     },
   }[status];
 

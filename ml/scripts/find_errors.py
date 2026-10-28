@@ -23,7 +23,7 @@ def load_classes() -> list[str]:
             classes = [line.strip() for line in f if line.strip()]
         if classes:
             return classes
-    return ["leaf_healthy", "leaf_diseased", "background"]
+    return ["leaf_healthy", "leaf_diseased"]
 
 
 def find_default_weights() -> Path:

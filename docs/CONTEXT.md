@@ -9,17 +9,19 @@ small image classifier, stores data in SQLite. Protocol: docs/ble_protocol.md.
  
 Plants: tomato, potato, pepper, brinjal (chosen per mission). Leaves only,
 no fruits, vegetables, or stems.
-Classifier classes: leaf_healthy, leaf_diseased, and optional background.
-Folder name = label, no boxes. The model is trained only on public images of
-healthy and diseased leaves (plus optional background).
+Classifier classes: leaf_healthy and leaf_diseased only.
+Folder name = label, no boxes. The model is trained on public images of
+healthy and diseased leaves.
  
 Per plant (website orchestrates): move -> probe read -> cam pose leaf -> scan ->
 decide -> aim nozzle -> pump (capped) -> log -> next plant.
  
-Decision: water if moisture < threshold. Treat (tank 2) if the leaf is diseased
-at or above the high confidence, aiming at the leaf. Between low and high =
-unsure, never spray. Background = no plant found (retry once, then skip). No spray
-if battery low, tank estimate low, or E-stop. Tank use = pump flow rate x run time.
+Decision: water if moisture < threshold. Since there is no background class,
+a result is never "no plant found". The decision uses only the confidence
+thresholds: diseased at or above the high confidence is treated (aiming at the leaf),
+diseased between low and high is unsure and never sprayed, and everything else is
+no action. No spray if battery low, tank estimate low, or E-stop.
+Tank use = pump flow rate x run time.
  
 Safety (in firmware): stop on no heartbeat for 1 s, BLE drop, E-stop, low battery,
 tilt, obstacle. Probe must be up before moving. Hard pump time caps. All outputs

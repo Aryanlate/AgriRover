@@ -31,7 +31,7 @@ def load_classes() -> list[str]:
             classes = [line.strip() for line in f if line.strip()]
         if classes:
             return classes
-    return ["leaf_healthy", "leaf_diseased", "background"]
+    return ["leaf_healthy", "leaf_diseased"]
 
 
 def find_default_weights() -> Path:
@@ -169,11 +169,6 @@ def evaluate_model(model_path: Path, test_dir: Path, report_path: Path, device: 
     leaf_correct = sum(1 for p in predictions if p["true_name"] in LEAF_CLASSES and p["correct"])
     leaf_acc = leaf_correct / len(leaf_samples) if leaf_samples else 0.0
 
-    # Background evaluation
-    bg_samples = [s for s in samples if s[1] == "background"]
-    bg_correct = sum(1 for p in predictions if p["true_name"] == "background" and p["correct"])
-    bg_acc = bg_correct / len(bg_samples) if bg_samples else 0.0
-
     # Goal Checks
     pass_acc = overall_acc >= 0.85
     min_recall = min(stats["recall"] for stats in per_class_stats.values()) if per_class_stats else 0.0
@@ -182,7 +177,7 @@ def evaluate_model(model_path: Path, test_dir: Path, report_path: Path, device: 
 
     # Generate Markdown Report
     lines = [
-        "# Agri-Rover Leaf-Only Test Split Evaluation Report",
+        "# Agri-Rover Two-Class Test Split Evaluation Report",
         "",
         "> [!WARNING]",
         "> **Notice**: The test set is **not** from ESP32-CAM photos. It evaluates performance on public leaf benchmark images. Domain shift may occur on physical rover hardware.",
@@ -198,13 +193,6 @@ def evaluate_model(model_path: Path, test_dir: Path, report_path: Path, device: 
         "|---|---|---|---|",
         f"| **Top-1 Accuracy** | **{overall_acc * 100:.2f}%** | >= 85.0% | {'PASS' if pass_acc else 'FAIL'} |",
         f"| **Minimum Class Recall** | **{min_recall * 100:.2f}%** (`{min_recall_cls}`) | >= 70.0% | {'PASS' if pass_recall else 'FAIL'} |",
-        "",
-        "## Part Breakdown",
-        "",
-        "| Plant Part | Samples | Correct | Accuracy | Part Classes |",
-        "|---|---|---|---|---|",
-        f"| **Leaf Part** | {len(leaf_samples)} | {leaf_correct} | {leaf_acc * 100:.2f}% | `leaf_healthy`, `leaf_diseased` |",
-        f"| **Background** | {len(bg_samples)} | {bg_correct} | {bg_acc * 100:.2f}% | `background` |",
         "",
         "## Per-Class Metrics",
         "",

@@ -4,7 +4,7 @@
 
 export interface PredictResult {
   part: string;
-  state: 'healthy' | 'diseased' | 'no_plant' | string;
+  state: 'healthy' | 'diseased' | string;
   confidence: number;
   class_name: string;
   raw_probabilities: Record<string, number>;

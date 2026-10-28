@@ -61,7 +61,6 @@ export const DesignPage: React.FC = () => {
     { status: 'treated', crop: 'Brinjal', moisture: 40, conf: 0.95 },
     { status: 'unsure', crop: 'Potato', moisture: 34, conf: 0.62 },
     { status: 'not scanned', crop: 'Potato', moisture: undefined, conf: undefined },
-    { status: 'no plant found', crop: 'Empty Pot', moisture: undefined, conf: 0.12 },
   ];
 
   const systemStatuses: SystemStatus[] = ['ready', 'running', 'paused', 'fault', 'disconnected'];

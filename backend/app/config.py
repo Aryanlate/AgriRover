@@ -12,6 +12,7 @@ DATASET_DIR = ML_DIR / "dataset"
 METADATA_CSV_PATH = DATASET_DIR / "metadata.csv"
 HARD_EXAMPLES_DIR = ML_DIR / "hard_examples"
 UPLOADS_DIR = BASE_DIR / "uploads"
+CHECKS_DIR = UPLOADS_DIR / "checks"
 
 # Database
 DB_PATH = BASE_DIR / "agri_rover.db"
@@ -24,7 +25,7 @@ DEFAULT_SETTINGS = {
     "moisture_threshold": "35.0",
     "default_water_dose_ml": "50.0",
     "default_treat_dose_ml": "25.0",
-    "high_confidence": "0.85",
+    "high_confidence": "0.95",
     "low_confidence": "0.60",
     "per_plant_water_cap_ml": "150.0",
     "per_plant_treat_cap_ml": "60.0",

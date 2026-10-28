@@ -150,3 +150,20 @@ class Calibration(Base):
     unit = Column(String(20), default="")
     notes = Column(Text, default="")
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class Check(Base):
+    __tablename__ = "checks"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    image_path = Column(String(255), nullable=False)
+    class_name = Column(String(50), nullable=False)
+    confidence = Column(Float, nullable=False)
+    verdict = Column(String(50), nullable=False)
+    raw_probabilities = Column(Text, nullable=True)  # JSON string
+    would_spray = Column(Boolean, default=False)
+    spray_reason = Column(Text, nullable=True)
+    warnings = Column(Text, nullable=True)  # JSON list string
+    model_mode = Column(String(20), default="real")
+    created_at = Column(DateTime, default=datetime.utcnow)
+

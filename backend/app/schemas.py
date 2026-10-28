@@ -152,3 +152,47 @@ class DatasetCaptureRequest(BaseModel):
 class HardExampleRequest(BaseModel):
     correct_class: str
     notes: Optional[str] = None
+
+
+# Analyze and Check Schemas
+class ImageQualityInfo(BaseModel):
+    width: int
+    height: int
+    brightness: float
+    blur: float
+    warnings: List[str] = []
+
+
+class SprayPreviewInfo(BaseModel):
+    would_spray: bool
+    reason: str
+
+
+class AnalyzeResponse(BaseModel):
+    class_name: str
+    confidence: float
+    raw_probabilities: Dict[str, float]
+    verdict: str
+    is_low_confidence: bool = False
+    spray_preview: SprayPreviewInfo
+    image_quality: ImageQualityInfo
+    model_mode: str
+    treatment: Optional[Dict[str, Any]] = None
+    explanation: str
+    check_id: Optional[int] = None
+    image_path: Optional[str] = None
+
+
+class CheckItem(BaseModel):
+    id: int
+    image_path: str
+    class_name: str
+    confidence: float
+    verdict: str
+    raw_probabilities: Optional[Dict[str, float]] = None
+    would_spray: bool = False
+    spray_reason: Optional[str] = None
+    warnings: List[str] = []
+    model_mode: str = "real"
+    created_at: str
+

@@ -100,8 +100,14 @@ const storedType =
   typeof localStorage !== 'undefined'
     ? (localStorage.getItem(STORAGE_TRANSPORT_KEY) as TransportType | null)
     : null;
+// MQTT is the default layer. BLE and Mock remain selectable in Settings.
+// Fall back to Mock only when the browser is non-MQTT-capable or MQTT settings are absent.
 const initialType: TransportType =
-  storedType === 'ble' || storedType === 'mock' || storedType === 'mqtt' ? storedType : 'mock';
+  storedType === 'ble' || storedType === 'mock' || storedType === 'mqtt'
+    ? storedType
+    : mqttSettingsExist()
+      ? 'mqtt'
+      : 'mock';
 
 const createTransport = (type: TransportType): RoverTransport => {
   if (type === 'mqtt') return new MqttTransport();

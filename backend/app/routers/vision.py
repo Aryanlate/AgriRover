@@ -27,7 +27,7 @@ from app.analysis import (
     get_clean_verdict,
     get_treatment_for_diseased,
 )
-from app.camera_client import camera_client, CameraClientError
+from app.mqtt_camera import mqtt_camera, CameraClientError
 from app.classifier import classifier
 from app.config import (
     CHECKS_DIR,
@@ -99,7 +99,7 @@ def scan_camera(req: ScanRequest, db: Session = Depends(get_db)):
 
     warning_msg = None
     try:
-        image_bytes = camera_client.capture_image(camera_ip, timeout=timeout_sec)
+        image_bytes = mqtt_camera.capture(led=False, timeout=timeout_sec)
     except CameraClientError as e:
         logger.warning(f"Camera capture error: {e}. Generating synthetic frame for development.")
         warning_msg = f"Camera unreachable ({e}); used synthetic mock image."
@@ -205,7 +205,7 @@ def capture_dataset_sample(
     timeout_sec = float(_get_setting_val(db, "camera_timeout_sec", DEFAULT_SETTINGS["camera_timeout_sec"]))
 
     try:
-        image_bytes = camera_client.capture_image(camera_ip, timeout=timeout_sec)
+        image_bytes = mqtt_camera.capture(led=False, timeout=timeout_sec)
     except CameraClientError as e:
         logger.warning(f"Dataset capture camera fallback: {e}")
         image_bytes = _generate_synthetic_image(part)

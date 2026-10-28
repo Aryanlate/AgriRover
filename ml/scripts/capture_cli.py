@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Agri-Rover CLI Capture Utility:
-Captures images from ESP32-CAM and saves them directly to raw/rover/inbox/<class>/.
+Captures images from ESP32-CAM over MQTT (EMQX Cloud TLS) and saves
+them directly to raw/rover/inbox/<class>/.
 Menu options: 1) leaf_healthy, 2) leaf_diseased. (Two classes only, no background).
 """
 
@@ -9,9 +10,12 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 import sys
-import urllib.request
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(REPO_ROOT / "backend"))
+
+from app.mqtt_camera import mqtt_camera, CameraClientError
+
 ML_DIR = REPO_ROOT / "ml"
 ROVER_INBOX = ML_DIR / "dataset" / "raw" / "rover" / "inbox"
 
@@ -21,14 +25,12 @@ CLASSES = [
 ]
 
 
-def capture_from_camera(camera_ip: str, target_class: str, plant_id: str = "T01"):
-    url = f"http://{camera_ip}/capture"
-    print(f"Connecting to ESP32-CAM at {url}...")
+def capture_from_camera(target_class: str, plant_id: str = "T01", led: bool = False):
+    print("Capturing frame from ESP32-CAM via MQTT (TLS port 8883)...")
     try:
-        with urllib.request.urlopen(url, timeout=5) as response:
-            data = response.read()
-    except Exception as e:
-        print(f"[ERROR] Failed to fetch frame from ESP32-CAM: {e}")
+        data = mqtt_camera.capture(led=led, timeout=5.0)
+    except CameraClientError as e:
+        print(f"[ERROR] Failed to fetch frame from ESP32-CAM over MQTT: {e}")
         return False
 
     dest_dir = ROVER_INBOX / target_class
@@ -41,18 +43,18 @@ def capture_from_camera(camera_ip: str, target_class: str, plant_id: str = "T01"
     with open(dest_path, "wb") as f:
         f.write(data)
 
-    print(f"[SUCCESS] Captured and saved -> {dest_path}")
+    print(f"[SUCCESS] Captured and saved ({len(data)} bytes) -> {dest_path}")
     return True
 
 
 def main():
-    parser = argparse.ArgumentParser(description="CLI Camera Capture for Agri-Rover")
-    parser.add_argument("--ip", default="192.168.4.1", help="ESP32-CAM IP address")
+    parser = argparse.ArgumentParser(description="CLI Camera Capture for Agri-Rover via MQTT")
     parser.add_argument("--plant-id", default="P01", help="Plant ID identifier")
+    parser.add_argument("--led", action="store_true", help="Enable illumination flash LED during capture")
     args = parser.parse_args()
 
     print("=" * 50)
-    print("AGRI-ROVER CLI CAPTURE (TWO-CLASS ONLY)")
+    print("AGRI-ROVER CLI CAPTURE (MQTT - TWO-CLASS ONLY)")
     print("=" * 50)
     print("Select target class:")
     for idx, cls in enumerate(CLASSES, 1):
@@ -69,7 +71,7 @@ def main():
         print("Exiting.")
         return
 
-    capture_from_camera(args.ip, selected_class, args.plant_id)
+    capture_from_camera(selected_class, args.plant_id, led=args.led)
 
 
 if __name__ == "__main__":

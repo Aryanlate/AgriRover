@@ -11,9 +11,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.classifier import classifier
-from app.config import DEFAULT_SETTINGS, UPLOADS_DIR
+from app.config import DEFAULT_SETTINGS, FRONTEND_ORIGIN, UPLOADS_DIR
 from app.database import Base, SessionLocal, engine
 from app.models import Setting
+from app.mqtt_camera import mqtt_camera
 from app.routers import alerts, decision, plants, runs, settings, vision
 
 # Setup Logging
@@ -60,17 +61,22 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS configuration for Frontend (React / Vite)
-origins = [
+# CORS configuration restricted strictly to localhost and configured website origin
+allowed_origins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
     "http://localhost:3000",
-    "*"  # Permissive for local testing
+    "http://localhost:4173",
 ]
+if FRONTEND_ORIGIN:
+    for origin in FRONTEND_ORIGIN.split(","):
+        clean_origin = origin.strip()
+        if clean_origin and clean_origin not in allowed_origins:
+            allowed_origins.append(clean_origin)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -102,7 +108,8 @@ def root():
 @app.get("/api/health")
 def health():
     return {
-        "status": "healthy",
-        "classifier_mode": "mock" if classifier.is_mock else "production",
-        "version": "1.0.0"
+        "broker_connected": mqtt_camera.is_broker_connected,
+        "rover_online": mqtt_camera.is_rover_online,
+        "camera_online": mqtt_camera.is_camera_online,
+        "model_mode": "mock" if classifier.is_mock else "real"
     }

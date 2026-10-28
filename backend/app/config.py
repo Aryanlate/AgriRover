@@ -1,8 +1,11 @@
 import os
 from pathlib import Path
+from dotenv import load_dotenv
 
 # Paths
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / ".env")
+
 WORKSPACE_ROOT = BASE_DIR.parent
 ML_DIR = WORKSPACE_ROOT / "ml"
 MODEL_PATH = ML_DIR / "models" / "best.pt"
@@ -18,9 +21,16 @@ CHECKS_DIR = UPLOADS_DIR / "checks"
 DB_PATH = BASE_DIR / "agri_rover.db"
 DATABASE_URL = f"sqlite:///{DB_PATH}"
 
+# MQTT Broker Configuration (EMQX Cloud TLS)
+MQTT_BROKER = os.getenv("MQTT_BROKER", "rc2ad722.ala.asia-southeast1.emqxsl.com")
+MQTT_PORT = int(os.getenv("MQTT_PORT", "8883"))
+MQTT_USER = os.getenv("MQTT_USER", "backend")
+MQTT_PASS = os.getenv("MQTT_PASS", "")
+ROVER_ID = os.getenv("ROVER_ID", "rover01")
+FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "https://agri-rover.vercel.app")
+
 # Default Settings
 DEFAULT_SETTINGS = {
-    "camera_ip": "192.168.4.1",
     "camera_timeout_sec": "5.0",
     "moisture_threshold": "35.0",
     "default_water_dose_ml": "50.0",

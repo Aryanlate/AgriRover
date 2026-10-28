@@ -2,8 +2,12 @@ node_modules/
 venv/
 __pycache__/
 .env
+*.env
+backend/.env
 .pio/
+firmware/src/secrets.h
 firmware_cam/src/secrets.h
+secrets.h
 ml/runs/
 ml/dataset/raw/
 ml/dataset/train/

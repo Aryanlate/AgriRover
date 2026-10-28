@@ -116,12 +116,14 @@ bool SafetyController::handleEStopReset(String& outReason) {
         return false;
     }
 
-    // 2. Check battery cutoff condition
+    // 2. Check battery cutoff condition (Bypassed: battery ADC is reported only, not used for automatic lockout yet)
+    /*
     float bat = SensorManager::instance().getBatteryVoltage();
     if (bat > 4.0f && bat <= ConfigStore::instance().getBatCutoff()) {
         outReason = "cannot reset: battery below cutoff";
         return false;
     }
+    */
 
     // 3. Check tilt condition
     float tilt = ImuDriver::instance().getTiltDeg();
@@ -157,7 +159,8 @@ void SafetyController::update() {
     if (now - lastSafetyCheckMs < 50) return;
     lastSafetyCheckMs = now;
 
-    // 2. Battery Safety Monitor
+    // 2. Battery Safety Monitor (Bypassed: battery ADC is reported only, not used for automatic decisions yet)
+    /*
     float bat = SensorManager::instance().getBatteryVoltage();
     float cutoff = ConfigStore::instance().getBatCutoff();
     float warn = ConfigStore::instance().getBatWarn();
@@ -186,6 +189,7 @@ void SafetyController::update() {
             }
         }
     }
+    */
 
     // 3. Tilt Safety Monitor
     float tilt = ImuDriver::instance().getTiltDeg();
@@ -196,7 +200,8 @@ void SafetyController::update() {
         }
     }
 
-    // 4. Obstacle Safety Monitor (Forward motion only)
+    // 4. Obstacle Safety Monitor (Bypassed: ultrasonic is reported only, not used for automatic decisions yet)
+    /*
     bool movingForward = (MotorDriver::instance().getCurrentLeft() > 0 && MotorDriver::instance().getCurrentRight() > 0) ||
                          MotionController::instance().isMovingForward();
 
@@ -214,6 +219,7 @@ void SafetyController::update() {
             }
         }
     }
+    */
 
     // 5. Wheel Slip Monitor (Encoders moving while IMU gyro/heading remains stationary)
     bool roverDriving = MotorDriver::instance().isMoving() || MotionController::instance().isBusy();

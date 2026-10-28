@@ -1,9 +1,9 @@
 #include <Arduino.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
-#include <NimBLEDevice.h>
 #include <ArduinoJson.h>
 #include <vector>
+#include <map>
 #include <Wire.h>
 #include <esp_task_wdt.h>
 
@@ -22,23 +22,34 @@
 #include "safety_controller.h"
 
 // ============================================================================
-// BLE UUID DEFINITIONS (docs/ble_protocol.md)
+// TRANSPORT SELECTION (MQTT by default via USE_MQTT=1, BLE fallback via USE_MQTT=0)
 // ============================================================================
-#define BLE_DEVICE_NAME      "AgriRover"
-#define SERVICE_UUID         "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
-#define CHAR_UUID_RX_WRITE   "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
-#define CHAR_UUID_TX_NOTIFY  "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
+#ifndef USE_MQTT
+#define USE_MQTT 1
+#endif
 
-// Global state and BLE pointers
+#include "transport.h"
+#if USE_MQTT
+#include "mqtt_transport.h"
+static MqttTransport activeTransport;
+#else
+#include "ble_transport.h"
+static BleTransport activeTransport;
+#endif
+
+static ITransport* transport = &activeTransport;
+
+// Global state
 static RoverState state;
-static NimBLEServer* pServer = nullptr;
-static NimBLECharacteristic* pTxChar = nullptr;
-static NimBLECharacteristic* pRxChar = nullptr;
 
-// Thread-safe incoming line queue using FreeRTOS mutex
-static std::string rxRawAccumulator;
+// Thread-safe incoming line queue
 static std::vector<String> incomingLineQueue;
 static SemaphoreHandle_t queueMutex = nullptr;
+
+// Sequence tracking and Single Controller Ownership
+static String currentControllerCid = "";
+static unsigned long lastOwnerHbMs = 0;
+static std::map<String, uint32_t, StringCompare> clientSeqMap;
 
 // ============================================================================
 // FORWARD DECLARATIONS
@@ -50,74 +61,43 @@ void sendFault(const String& faultCode);
 void sendAlert(const String& code, const String& msg);
 void stopAll(const String& reason);
 void handleIncomingCommand(const String& line);
+void broadcastTelemetry();
+void checkHeartbeatWatchdog();
+void setupSubsystemCallbacks();
 
 // ============================================================================
-// OUTGOING MESSAGE CHUNKING (MTU-AWARE)
-// Splits outgoing JSON lines into chunks fitting the peer MTU.
+// OUTGOING MESSAGE DISPATCHERS VIA TRANSPORT ABSTRACTION
 // ============================================================================
 void sendJson(const String& jsonStr) {
-    if (!state.isConnected || pTxChar == nullptr) {
-        return;
-    }
-
-    String payload = jsonStr + "\n";
-    const uint8_t* data = (const uint8_t*)payload.c_str();
-    size_t totalLen = payload.length();
-    size_t offset = 0;
-
-    // Standard BLE ATT header is 3 bytes
-    size_t chunkLimit = state.currentMtu > 3 ? (state.currentMtu - 3) : 20;
-    if (chunkLimit > 180) chunkLimit = 180; // Safety cap
-    if (chunkLimit < 20)  chunkLimit = 20;
-
-    while (offset < totalLen) {
-        size_t sendLen = totalLen - offset;
-        if (sendLen > chunkLimit) {
-            sendLen = chunkLimit;
-        }
-
-        pTxChar->setValue(data + offset, sendLen);
-        pTxChar->notify();
-
-        offset += sendLen;
-        if (offset < totalLen) {
-            delayMicroseconds(400);
-        }
+    if (transport != nullptr) {
+        transport->sendJson(jsonStr);
     }
 }
 
-// Helpers for formatted protocol responses
 void sendAck(const String& cmd, bool ok, const String& reason, const String& extraJson) {
-    String msg = "{\"t\":\"ack\",\"c\":\"" + cmd + "\",\"ok\":" + (ok ? "true" : "false");
-    if (!ok && reason.length() > 0) {
-        msg += ",\"reason\":\"" + reason + "\"";
+    if (transport != nullptr) {
+        transport->sendAck(cmd, ok, reason, extraJson);
     }
-    if (extraJson.length() > 0) {
-        msg += "," + extraJson;
-    }
-    msg += "}";
-    sendJson(msg);
 }
 
 void sendEvent(const String& eventName, const String& extraJson) {
-    String msg = "{\"t\":\"ev\",\"e\":\"" + eventName + "\"";
-    if (extraJson.length() > 0) {
-        msg += "," + extraJson;
+    if (transport != nullptr) {
+        transport->sendEvent(eventName, extraJson);
     }
-    msg += "}";
-    sendJson(msg);
 }
 
 void sendFault(const String& faultCode) {
     state.isFault = true;
     state.faultCode = faultCode;
-    String msg = "{\"t\":\"fault\",\"code\":\"" + faultCode + "\"}";
-    sendJson(msg);
+    if (transport != nullptr) {
+        transport->sendFault(faultCode);
+    }
 }
 
 void sendAlert(const String& code, const String& msg) {
-    String out = "{\"t\":\"al\",\"code\":\"" + code + "\",\"msg\":\"" + msg + "\"}";
-    sendJson(out);
+    if (transport != nullptr) {
+        transport->sendAlert(code, msg);
+    }
 }
 
 // ============================================================================
@@ -125,70 +105,13 @@ void sendAlert(const String& code, const String& msg) {
 // ============================================================================
 void stopAll(const String& reason) {
     state.isMoving = false;
+    MotorDriver::instance().emergencyStop();
+    PumpManager::instance().stopAll();
     SafetyController::instance().emergencyStopAll(reason);
 }
 
 // ============================================================================
-// BLE CALLBACKS
-// ============================================================================
-class ServerCallbacks : public NimBLEServerCallbacks {
-    void onConnect(NimBLEServer* pServ, ble_gap_conn_desc* desc) override {
-        state.isConnected = true;
-        state.connId = desc->conn_handle;
-        state.lastMessageMs = millis();
-        state.currentMtu = pServ->getPeerMTU(desc->conn_handle);
-        if (state.currentMtu < 23) state.currentMtu = 23;
-
-        Serial.printf("[BLE] Client connected (handle=%u, MTU=%u)\n", desc->conn_handle, state.currentMtu);
-        // Send initial mode event immediately upon connection
-        sendEvent("mode", "\"m\":\"" + String(SafetyController::instance().getModeString()) + "\"");
-    }
-
-    void onDisconnect(NimBLEServer* pServ) override {
-        state.isConnected = false;
-        Serial.println("[BLE] Client disconnected! Stopping actuators and setting PAUSED mode...");
-        SafetyController::instance().onBleDisconnected();
-        NimBLEDevice::startAdvertising();
-    }
-
-    void onMTUChange(uint16_t MTU, ble_gap_conn_desc* desc) override {
-        state.currentMtu = MTU;
-        Serial.printf("[BLE] Negotiated MTU: %u\n", MTU);
-    }
-};
-
-class RxCallbacks : public NimBLECharacteristicCallbacks {
-    void onWrite(NimBLECharacteristic* pCharacteristic) override {
-        std::string rxData = pCharacteristic->getValue();
-        if (rxData.empty()) return;
-
-        // Reassemble incoming lines across multiple writes
-        for (char c : rxData) {
-            if (c == '\n') {
-                if (!rxRawAccumulator.empty()) {
-                    String line = String(rxRawAccumulator.c_str());
-                    line.trim();
-                    if (line.length() > 0 && queueMutex != nullptr) {
-                        if (xSemaphoreTake(queueMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-                            incomingLineQueue.push_back(line);
-                            xSemaphoreGive(queueMutex);
-                        }
-                    }
-                    rxRawAccumulator.clear();
-                }
-            } else if (c != '\r') {
-                if (rxRawAccumulator.length() < 1024) {
-                    rxRawAccumulator += c;
-                } else {
-                    rxRawAccumulator.clear();
-                }
-            }
-        }
-    }
-};
-
-// ============================================================================
-// INCOMING COMMAND DISPATCHER
+// INCOMING COMMAND DISPATCHER (TRANSPORT AGNOSTIC)
 // ============================================================================
 void handleIncomingCommand(const String& line) {
     JsonDocument doc;
@@ -205,11 +128,24 @@ void handleIncomingCommand(const String& line) {
         return;
     }
 
+    // 1. Client ID and Sequence Validation (Replay Prevention)
+    const char* cidStr = doc["cid"] | "";
+    String cid = String(cidStr);
+    if (cid.length() > 0 && doc.containsKey("seq")) {
+        uint32_t seq = doc["seq"];
+        auto it = clientSeqMap.find(cid);
+        if (it != clientSeqMap.end() && seq <= it->second) {
+            Serial.printf("[CMD] Dropping outdated/replay seq %u for cid '%s' (last seen=%u)\n", seq, cid.c_str(), it->second);
+            return;
+        }
+        clientSeqMap[cid] = seq;
+    }
+
     // Update heartbeat watchdog timestamp
     state.lastMessageMs = millis();
 
     // ------------------------------------------------------------------------
-    // Command 1: STOP (Highest Priority)
+    // Command 1: STOP (Highest Priority - Accepted from ANY client/cid)
     // ------------------------------------------------------------------------
     if (strcmp(cmd, "stop") == 0) {
         stopAll("Command STOP");
@@ -218,11 +154,45 @@ void handleIncomingCommand(const String& line) {
     }
 
     // ------------------------------------------------------------------------
-    // Command 2: HEARTBEAT (hb)
+    // Command 2: HEARTBEAT (hb) - Claims or renews controller ownership
     // ------------------------------------------------------------------------
     if (strcmp(cmd, "hb") == 0) {
+        if (cid.length() > 0) {
+            if (currentControllerCid.length() == 0) {
+                currentControllerCid = cid;
+                lastOwnerHbMs = millis();
+                Serial.printf("[OWNERSHIP] Controller '%s' acquired single control ownership via heartbeat.\n", cid.c_str());
+            } else if (currentControllerCid == cid) {
+                lastOwnerHbMs = millis();
+            }
+        }
         sendAck("hb", true);
         return;
+    }
+
+    // ------------------------------------------------------------------------
+    // SINGLE CONTROLLER OWNERSHIP CHECK FOR ACTUATOR ACTIONS
+    // ------------------------------------------------------------------------
+    bool isProtectedAction = (strcmp(cmd, "drive") == 0 ||
+                              strcmp(cmd, "move") == 0  ||
+                              strcmp(cmd, "turn") == 0  ||
+                              strcmp(cmd, "probe") == 0 ||
+                              strcmp(cmd, "nozzle") == 0 ||
+                              strcmp(cmd, "camtilt") == 0 ||
+                              strcmp(cmd, "pump") == 0);
+
+    if (isProtectedAction) {
+        // If another client currently owns control, reject this command
+        if (currentControllerCid.length() > 0 && cid.length() > 0 && cid != currentControllerCid) {
+            sendAck(cmd, false, "another controller");
+            return;
+        }
+        // If no owner currently, the first active command claims it
+        if (currentControllerCid.length() == 0 && cid.length() > 0) {
+            currentControllerCid = cid;
+            lastOwnerHbMs = millis();
+            Serial.printf("[OWNERSHIP] Controller '%s' auto-claimed ownership.\n", cid.c_str());
+        }
     }
 
     // ------------------------------------------------------------------------
@@ -478,12 +448,15 @@ void handleIncomingCommand(const String& line) {
 
 // ============================================================================
 // TELEMETRY BROADCASTER (5 Hz = 200 ms)
+// Reports all fields: soil, temp, humidity, tilt, bat, battery_v, distance_cm,
+// lat, lng, pan, nozzle_tilt, mode, probe, enc
 // ============================================================================
 void broadcastTelemetry() {
-    if (!state.isConnected) return;
+    if (!transport->isConnected()) return;
 
     float bat = SensorManager::instance().getBatteryVoltage();
     int soil = SensorManager::instance().getSoilPercent();
+    int soilRaw = SensorManager::instance().getRawSoil();
     float temp = SensorManager::instance().getTemperatureC();
     float hum = SensorManager::instance().getHumidityPct();
     float tilt = ImuDriver::instance().getTiltDeg();
@@ -492,26 +465,37 @@ void broadcastTelemetry() {
     long encL = EncoderDriver::instance().getTicksL();
     long encR = EncoderDriver::instance().getTicksR();
 
+    float curPan = ServosPCA9685::instance().getCurrentAngle(ServoChannel::NOZZLE_PAN);
+    float curNozzleTilt = ServosPCA9685::instance().getCurrentAngle(ServoChannel::NOZZLE_TILT);
+
     String tel = "{\"t\":\"tel\"";
     tel += ",\"bat\":" + String(bat, 1);
+    tel += ",\"battery_v\":" + String(bat, 2);
     tel += ",\"mode\":\"" + String(SafetyController::instance().getModeString()) + "\"";
     tel += ",\"soil\":" + String(soil);
+    tel += ",\"soil_raw\":" + String(soilRaw);
     tel += ",\"temp\":" + String(temp, 1);
     tel += ",\"hum\":" + String(hum, 1);
+    tel += ",\"humidity\":" + String(hum, 1);
     tel += ",\"tilt\":" + String(tilt, 1);
     tel += ",\"dist\":" + String(dist);
+    tel += ",\"distance_cm\":" + String(dist);
     tel += ",\"probe\":\"" + probe + "\"";
+    tel += ",\"pan\":" + String((int)curPan);
+    tel += ",\"nozzle_tilt\":" + String((int)curNozzleTilt);
+    tel += ",\"lat\":0.0";
+    tel += ",\"lng\":0.0";
     tel += ",\"enc\":{\"l\":" + String(encL) + ",\"r\":" + String(encR) + "}";
     tel += "}";
 
-    sendJson(tel);
+    transport->sendTelemetry(tel);
 }
 
 // ============================================================================
-// HEARTBEAT WATCHDOG
+// HEARTBEAT WATCHDOG (1000 ms timeout)
 // ============================================================================
 void checkHeartbeatWatchdog() {
-    if (!state.isConnected) return;
+    if (!transport->isConnected()) return;
 
     unsigned long now = millis();
     if (now - state.lastMessageMs > 1000) {
@@ -566,7 +550,7 @@ void setup() {
     delay(400);
 
     Serial.println("\n========================================================");
-    Serial.println("   AgriRover ESP32 Main Controller - Safety & State Boot ");
+    Serial.println("   AgriRover ESP32 Main Controller - Transport & Safety ");
     Serial.println("========================================================");
 
     // 1. Initialize NVS Config Storage
@@ -622,34 +606,31 @@ void setup() {
     // Ensure all motors and actuators are initially idle and safe
     stopAll("Initial Boot");
 
-    // 9. Initialize NimBLE Stack
-    NimBLEDevice::init(BLE_DEVICE_NAME);
-    NimBLEDevice::setPower(ESP_PWR_LVL_P9);
+    // 9. Initialize Active Transport (MQTT default or BLE fallback)
+    Serial.printf("[TRANSPORT] Starting %s transport layer...\n", transport->getName());
 
-    pServer = NimBLEDevice::createServer();
-    pServer->setCallbacks(new ServerCallbacks());
+#if USE_MQTT
+    activeTransport.setOnDisconnectCallback([](const String& reason) {
+        Serial.printf("[MAIN] MQTT connection lost (%s). Stopping all motors and pumps...\n", reason.c_str());
+        stopAll(reason);
+        SafetyController::instance().onBleDisconnected(); // Reuses safety transition to PAUSED
+    });
+#else
+    activeTransport.setOnDisconnectCallback([](const String& reason) {
+        Serial.printf("[MAIN] BLE disconnected (%s). Stopping all actuators...\n", reason.c_str());
+        stopAll(reason);
+        SafetyController::instance().onBleDisconnected();
+    });
+#endif
 
-    NimBLEService* pService = pServer->createService(SERVICE_UUID);
+    transport->init([](const String& line) {
+        if (queueMutex != nullptr && xSemaphoreTake(queueMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+            incomingLineQueue.push_back(line);
+            xSemaphoreGive(queueMutex);
+        }
+    });
 
-    pTxChar = pService->createCharacteristic(
-        CHAR_UUID_TX_NOTIFY,
-        NIMBLE_PROPERTY::NOTIFY
-    );
-
-    pRxChar = pService->createCharacteristic(
-        CHAR_UUID_RX_WRITE,
-        NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR
-    );
-    pRxChar->setCallbacks(new RxCallbacks());
-
-    pService->start();
-
-    NimBLEAdvertising* pAdvertising = NimBLEDevice::getAdvertising();
-    pAdvertising->addServiceUUID(SERVICE_UUID);
-    pAdvertising->setName(BLE_DEVICE_NAME);
-    pAdvertising->start();
-
-    Serial.println("[BLE] Advertising started as 'AgriRover'. Ready for mission.");
+    Serial.printf("[SYSTEM] AgriRover boot complete. Active transport: %s\n", transport->getName());
 }
 
 // ============================================================================
@@ -659,7 +640,17 @@ void loop() {
     // 0. Pet the ESP32 Task Watchdog
     esp_task_wdt_reset();
 
-    // 1. Process queued incoming lines from BLE
+    // 1. Update Active Transport Layer (Wi-Fi/MQTT non-blocking state machine & loop)
+    transport->update();
+
+    // 2. Check Controller Ownership Expiration (Released after 3.0 s without heartbeat)
+    if (currentControllerCid.length() > 0 && millis() - lastOwnerHbMs > 3000) {
+        Serial.printf("[OWNERSHIP] Controller '%s' timed out (>3000ms without heartbeat). Ownership released to none.\n",
+                      currentControllerCid.c_str());
+        currentControllerCid = "";
+    }
+
+    // 3. Process queued incoming lines from active transport
     String nextLine = "";
     if (queueMutex != nullptr && xSemaphoreTake(queueMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
         if (!incomingLineQueue.empty()) {
@@ -673,7 +664,7 @@ void loop() {
         handleIncomingCommand(nextLine);
     }
 
-    // 2. Hardware Subsystem Non-Blocking Updates
+    // 4. Hardware Subsystem Non-Blocking Updates
     MotorDriver::instance().update();
     ImuDriver::instance().update();
     ServosPCA9685::instance().update();
@@ -683,13 +674,13 @@ void loop() {
     MotionController::instance().update();
     SelfTestRunner::instance().update();
 
-    // 3. Central Safety Controller Update (Hardware E-Stop pin, Bat, Tilt, Obstacle, Slip)
+    // 5. Central Safety Controller Update (Hardware E-Stop pin, IMU tilt, slip detection)
     SafetyController::instance().update();
 
-    // 4. Heartbeat Watchdog check (1000 ms)
+    // 6. Heartbeat Watchdog check (1000 ms)
     checkHeartbeatWatchdog();
 
-    // 5. Broadcast 5 Hz Telemetry (every 200 ms)
+    // 7. Broadcast 5 Hz Telemetry (every 200 ms)
     unsigned long now = millis();
     if (now - state.lastTelemetryMs >= 200) {
         state.lastTelemetryMs = now;

@@ -74,10 +74,18 @@ export const ManualPage: React.FC = () => {
         !a.acknowledged
     );
   const isLowBattery = Boolean(telemetry?.bat && (telemetry.bat.pct < 20 || telemetry.bat.low));
-  const isProbeUp = telemetry ? telemetry.probe === 'up' : false;
+  
+  // Soil probe state: only blocks driving wheels, never locks the probe actuator buttons!
+  const isProbeDeployed = telemetry
+    ? telemetry.probe === 'down' || telemetry.probe === 'moving' || telemetry.probe === 'stuck'
+    : false;
 
-  const isConfirmedSafe = !isDisconnected && !isEstop && !isFault && !isLowBattery && isProbeUp;
+  // General safety locks: rover disconnected, e-stop, hardware fault, or low battery
+  const isConfirmedSafe = !isDisconnected && !isEstop && !isFault && !isLowBattery;
   const isManualLocked = isAutoRunning || turningOffPending || !isConfirmedSafe;
+
+  // Wheel drive locomotion lock: locked if general manual lock is active OR probe is not UP
+  const isDriveLocked = isManualLocked || isProbeDeployed;
 
   // Settings
   const [maxSpeedSetting, setMaxSpeedSetting] = useState(100);
@@ -141,8 +149,8 @@ export const ManualPage: React.FC = () => {
 
   const startDriving = useCallback(
     (dir: 'forward' | 'reverse' | 'left' | 'right') => {
-      // Reject if manual controls are locked (Auto running, safety pause, probe not up)
-      if (isManualLocked) {
+      // Reject if manual controls or drive lock are active (Auto running, safety pause, probe not up)
+      if (isDriveLocked) {
         return;
       }
 
@@ -176,7 +184,7 @@ export const ManualPage: React.FC = () => {
         send({ c: 'drive', l, r });
       }, 200);
     },
-    [isManualLocked, speed, send]
+    [isDriveLocked, speed, send]
   );
 
   // Safety: Stop on window blur or tab hide
@@ -205,7 +213,7 @@ export const ManualPage: React.FC = () => {
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.repeat) return;
-      if (isManualLocked) return;
+      if (isDriveLocked) return;
       // Do not capture if user is typing in an input
       if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return;
 
@@ -245,7 +253,7 @@ export const ManualPage: React.FC = () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [startDriving, stopDriving, isManualLocked]);
+  }, [startDriving, stopDriving, isDriveLocked]);
 
   // 4. Handle incoming Acks & Refusals -> Toast Notifications
   useEffect(() => {
@@ -467,7 +475,7 @@ export const ManualPage: React.FC = () => {
         {/* PANEL 1: DRIVE PAD WITH PRESS-AND-HOLD */}
         <Card title="Drive Control & Throttle" variant="default" className="p-6 flex flex-col items-center">
           {/* Probe Interlock Warning */}
-          {!isProbeUp && (
+          {!isDisconnected && isProbeDeployed && (
             <div className="w-full mb-4 p-3.5 rounded-xl border-2 border-danger bg-danger/15 text-danger text-xs font-bold flex items-center gap-2.5">
               <AlertTriangle className="w-5 h-5 flex-shrink-0 animate-pulse" />
               <span>
@@ -505,7 +513,7 @@ export const ManualPage: React.FC = () => {
               variant={activeDirection === 'forward' ? 'primary' : 'secondary'}
               size="lg"
               className="min-h-[72px]"
-              disabled={isManualLocked || !isProbeUp}
+              disabled={isDriveLocked}
               onPointerDown={() => startDriving('forward')}
               onPointerUp={stopDriving}
               onPointerLeave={stopDriving}
@@ -519,7 +527,7 @@ export const ManualPage: React.FC = () => {
               variant={activeDirection === 'left' ? 'primary' : 'secondary'}
               size="lg"
               className="min-h-[72px]"
-              disabled={isManualLocked || !isProbeUp}
+              disabled={isDriveLocked}
               onPointerDown={() => startDriving('left')}
               onPointerUp={stopDriving}
               onPointerLeave={stopDriving}
@@ -541,7 +549,7 @@ export const ManualPage: React.FC = () => {
               variant={activeDirection === 'right' ? 'primary' : 'secondary'}
               size="lg"
               className="min-h-[72px]"
-              disabled={isManualLocked || !isProbeUp}
+              disabled={isDriveLocked}
               onPointerDown={() => startDriving('right')}
               onPointerUp={stopDriving}
               onPointerLeave={stopDriving}
@@ -555,7 +563,7 @@ export const ManualPage: React.FC = () => {
               variant={activeDirection === 'reverse' ? 'primary' : 'secondary'}
               size="lg"
               className="min-h-[72px]"
-              disabled={isManualLocked || !isProbeUp}
+              disabled={isDriveLocked}
               onPointerDown={() => startDriving('reverse')}
               onPointerUp={stopDriving}
               onPointerLeave={stopDriving}

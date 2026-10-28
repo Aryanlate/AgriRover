@@ -365,6 +365,7 @@ export const useRoverStore = create<RoverState>((set, get) => {
     setMode: async (mode: 'idle' | 'manual' | 'mission') => {
       const { send } = get();
       set({
+        mode,
         currentTask:
           mode === 'mission'
             ? 'Autonomous field scanning & treatment'

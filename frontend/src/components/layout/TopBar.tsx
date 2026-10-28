@@ -26,6 +26,7 @@ export const TopBar: React.FC = () => {
     connect,
     disconnect,
     emergencyStop,
+    mqttDetails,
   } = useRoverStore();
 
   const {
@@ -141,6 +142,16 @@ export const TopBar: React.FC = () => {
           {/* Transport Type Toggle */}
           <div className="hidden lg:flex items-center bg-app border-2 border-border rounded-xl p-1 gap-1 text-xs font-bold">
             <button
+              onClick={() => setTransportType('mqtt')}
+              className={`px-2.5 py-1.5 rounded-lg transition-colors min-h-[32px] ${
+                transportType === 'mqtt'
+                  ? 'bg-primary text-surface shadow-xs'
+                  : 'text-text-muted hover:text-text-main'
+              }`}
+            >
+              MQTT
+            </button>
+            <button
               onClick={() => setTransportType('ble')}
               className={`px-2.5 py-1.5 rounded-lg transition-colors min-h-[32px] ${
                 transportType === 'ble'
@@ -161,6 +172,36 @@ export const TopBar: React.FC = () => {
               MOCK
             </button>
           </div>
+
+          {/* MQTT link statuses: broker, rover, camera */}
+          {transportType === 'mqtt' && (
+            <div
+              className="hidden md:flex items-center gap-1.5"
+              role="status"
+              aria-label="MQTT link status"
+            >
+              {[
+                { label: 'BROKER', ok: mqttDetails?.brokerConnected ?? false },
+                { label: 'ROVER', ok: mqttDetails?.roverOnline ?? false },
+                { label: 'CAMERA', ok: mqttDetails?.cameraOnline ?? false },
+              ].map((s) => (
+                <span
+                  key={s.label}
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border-2 text-[10px] font-black uppercase min-h-[36px] ${
+                    s.ok
+                      ? 'border-primary/50 text-primary bg-primary/10'
+                      : 'border-border text-text-muted bg-surface'
+                  }`}
+                >
+                  <span
+                    className={`w-2 h-2 rounded-full ${s.ok ? 'bg-primary' : 'bg-danger'}`}
+                    aria-hidden="true"
+                  />
+                  {s.label}
+                </span>
+              ))}
+            </div>
+          )}
 
           {/* Battery Status */}
           <div

@@ -3,8 +3,9 @@
  */
 
 import { create } from 'zustand';
-import { BleTransport, MockTransport } from '../services/ble';
+import { BleTransport, MockTransport, MqttTransport, isMqttTransport, mqttSettingsExist } from '../services/ble';
 import type {
+  MqttStatusDetails,
   RoverInMessage,
   RoverMode,
   RoverOutMessage,
@@ -54,6 +55,9 @@ interface RoverState {
   connectionStatus: TransportStatus;
   connectionError: string | null;
 
+  // MQTT broker/rover/camera status (null when MQTT is not the active transport)
+  mqttDetails: MqttStatusDetails | null;
+
   // Rover Telemetry & Mode
   telemetry: TelemetryData | null;
   lastTelemetryTime: Date | null;
@@ -92,11 +96,20 @@ interface RoverState {
 
 // Initialise transport instance based on preference
 const STORAGE_TRANSPORT_KEY = 'agri_rover_transport_pref';
+const storedType =
+  typeof localStorage !== 'undefined'
+    ? (localStorage.getItem(STORAGE_TRANSPORT_KEY) as TransportType | null)
+    : null;
 const initialType: TransportType =
-  (typeof localStorage !== 'undefined' && (localStorage.getItem(STORAGE_TRANSPORT_KEY) as TransportType)) ||
-  'mock';
+  storedType === 'ble' || storedType === 'mock' || storedType === 'mqtt' ? storedType : 'mock';
 
-let activeTransport: RoverTransport = initialType === 'ble' ? new BleTransport() : new MockTransport();
+const createTransport = (type: TransportType): RoverTransport => {
+  if (type === 'mqtt') return new MqttTransport();
+  if (type === 'ble') return new BleTransport();
+  return new MockTransport();
+};
+
+let activeTransport: RoverTransport = createTransport(initialType);
 
 const isBluetoothSupported =
   typeof navigator !== 'undefined' && Boolean((navigator as any).bluetooth);
@@ -241,6 +254,11 @@ export const useRoverStore = create<RoverState>((set, get) => {
         set((state) => ({ alerts: [newFaultAlert, ...state.alerts], mode: 'fault' }));
       }
     });
+
+    // MQTT-only: mirror broker/rover/camera status into the store for the top bar & banners
+    if (isMqttTransport(t)) {
+      t.onMqttStatus((details) => set({ mqttDetails: details }));
+    }
   };
 
   setupTransportListeners(activeTransport);
@@ -252,6 +270,7 @@ export const useRoverStore = create<RoverState>((set, get) => {
 
     connectionStatus: 'disconnected',
     connectionError: null,
+    mqttDetails: null,
 
     telemetry: null,
     lastTelemetryTime: null,
@@ -275,7 +294,7 @@ export const useRoverStore = create<RoverState>((set, get) => {
         current.disconnect();
       }
 
-      const newTransport = type === 'ble' ? new BleTransport() : new MockTransport();
+      const newTransport = createTransport(type);
       activeTransport = newTransport;
       setupTransportListeners(newTransport);
 
@@ -290,12 +309,17 @@ export const useRoverStore = create<RoverState>((set, get) => {
         transport: newTransport,
         connectionStatus: 'disconnected',
         connectionError: null,
+        mqttDetails: null,
       });
 
-      // Auto-connect when user switches to Mock simulator so they aren't stuck offline
+      // Auto-connect: Mock always (so the user isn't stuck offline), MQTT once settings exist.
       if (type === 'mock') {
         newTransport.connect().catch((e) => {
           console.warn('Mock connect error:', e);
+        });
+      } else if (type === 'mqtt' && mqttSettingsExist()) {
+        newTransport.connect().catch((e) => {
+          console.warn('MQTT connect error:', e);
         });
       }
     },
@@ -313,7 +337,7 @@ export const useRoverStore = create<RoverState>((set, get) => {
     disconnect: async () => {
       const { transport } = get();
       await transport.disconnect();
-      set({ connectionStatus: 'disconnected', connectionError: null });
+      set({ connectionStatus: 'disconnected', connectionError: null, mqttDetails: null });
     },
 
     send: async (msg: RoverOutMessage) => {
@@ -415,3 +439,10 @@ export const useRoverStore = create<RoverState>((set, get) => {
     clearLog: () => set({ log: [] }),
   };
 });
+
+// Auto-connect on first load when MQTT was the saved transport and broker settings exist.
+if (initialType === 'mqtt' && mqttSettingsExist()) {
+  useRoverStore.getState().connect().catch((e) => {
+    console.warn('MQTT auto-connect failed:', e);
+  });
+}

@@ -3,7 +3,6 @@ import {
   Save,
   Check,
   Server,
-  Camera,
   Radio,
   Droplets,
   ShieldAlert,
@@ -12,8 +11,10 @@ import {
   Moon,
   Laptop,
   Thermometer,
+  Lock,
 } from 'lucide-react';
 import { useRoverStore } from '../store/roverStore';
+import { MQTT_STORAGE_KEYS, DEFAULT_MQTT_CONFIG } from '../services/ble';
 import { useTheme } from '../context/ThemeContext';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
@@ -26,7 +27,6 @@ export const SettingsPage: React.FC = () => {
 
   // Core settings state
   const [settings, setSettings] = useState<Record<string, string>>({
-    camera_ip: '192.168.4.1',
     backend_url: 'http://localhost:8000',
     moisture_threshold: '35.0',
     high_confidence: '0.85',
@@ -48,6 +48,15 @@ export const SettingsPage: React.FC = () => {
 
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ type: ToastType; title: string; message: string } | null>(null);
+  const [showMqttPassword, setShowMqttPassword] = useState(false);
+
+  // MQTT broker settings — stored only in this browser (localStorage), never sent to the backend.
+  const [mqtt, setMqtt] = useState({
+    url: DEFAULT_MQTT_CONFIG.URL,
+    username: DEFAULT_MQTT_CONFIG.USER,
+    password: '',
+    roverId: DEFAULT_MQTT_CONFIG.ROVER_ID,
+  });
 
   // Load saved settings from backend and localStorage on mount
   useEffect(() => {
@@ -92,6 +101,18 @@ export const SettingsPage: React.FC = () => {
       if (storedObstacle) {
         setSettings((prev) => ({ ...prev, obstacle_distance_cm: storedObstacle }));
       }
+
+      // MQTT broker credentials (browser-local only)
+      const storedMqttUrl = localStorage.getItem(MQTT_STORAGE_KEYS.URL);
+      const storedMqttUser = localStorage.getItem(MQTT_STORAGE_KEYS.USER);
+      const storedMqttPass = localStorage.getItem(MQTT_STORAGE_KEYS.PASS);
+      const storedRoverId = localStorage.getItem(MQTT_STORAGE_KEYS.ROVER_ID);
+      setMqtt((prev) => ({
+        url: storedMqttUrl || prev.url,
+        username: storedMqttUser || prev.username,
+        password: storedMqttPass || prev.password,
+        roverId: storedRoverId || prev.roverId,
+      }));
     } catch {
       // ignore localStorage parse error
     }
@@ -121,6 +142,12 @@ export const SettingsPage: React.FC = () => {
         localStorage.setItem('agrirover_backend_url', settings.backend_url);
         localStorage.setItem('agrirover_max_speed', settings.max_speed_pct);
         localStorage.setItem('agrirover_obstacle_dist', settings.obstacle_distance_cm);
+
+        // MQTT broker credentials stay in this browser only (never NEXT_PUBLIC_/backend)
+        localStorage.setItem(MQTT_STORAGE_KEYS.URL, mqtt.url);
+        localStorage.setItem(MQTT_STORAGE_KEYS.USER, mqtt.username);
+        localStorage.setItem(MQTT_STORAGE_KEYS.PASS, mqtt.password);
+        localStorage.setItem(MQTT_STORAGE_KEYS.ROVER_ID, mqtt.roverId);
       } catch {
         // ignore
       }
@@ -131,6 +158,11 @@ export const SettingsPage: React.FC = () => {
         await send({ c: 'cfg', k: 'obs_dist', v: parseInt(settings.obstacle_distance_cm, 10) || 15 });
       } catch {
         // ignore if offline
+      }
+
+      // 4. Re-apply MQTT connection with the new credentials
+      if (transportType === 'mqtt') {
+        setTransportType('mqtt');
       }
 
       setToast({
@@ -192,7 +224,20 @@ export const SettingsPage: React.FC = () => {
               <Radio className="w-3.5 h-3.5" />
               Rover Hardware Transport Mode
             </label>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <button
+                type="button"
+                onClick={() => setTransportType('mqtt')}
+                className={`p-3.5 rounded-xl border-2 text-left transition-all ${
+                  transportType === 'mqtt'
+                    ? 'border-primary bg-primary/10 text-primary font-bold'
+                    : 'border-border bg-app text-text-muted hover:border-text-muted'
+                }`}
+              >
+                <div className="text-sm font-bold text-text-main">MQTT (EMQX Cloud)</div>
+                <div className="text-[11px] text-text-muted mt-1">Default link to rover &amp; camera over secure WebSockets</div>
+              </button>
+
               <button
                 type="button"
                 onClick={() => setTransportType('ble')}
@@ -221,33 +266,96 @@ export const SettingsPage: React.FC = () => {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-border">
-            <div>
-              <label className="text-xs font-bold uppercase text-text-muted block mb-1 flex items-center gap-1">
-                <Camera className="w-3.5 h-3.5" />
-                ESP32-CAM IP Address
-              </label>
-              <input
-                type="text"
-                value={settings.camera_ip}
-                onChange={(e) => handleChange('camera_ip', e.target.value)}
-                placeholder="192.168.4.1"
-                className="w-full px-3.5 py-2.5 rounded-xl border-2 border-border bg-app text-text-main font-mono text-xs font-bold focus:outline-none focus:border-primary"
-              />
+          {/* MQTT Broker Configuration (browser-local) */}
+          <div className="pt-4 border-t border-border space-y-4">
+            <div className="flex items-center gap-2">
+              <Lock className="w-4 h-4 text-warning flex-shrink-0" />
+              <h4 className="text-xs font-bold uppercase text-text-muted">MQTT Broker Configuration</h4>
             </div>
 
-            <div>
-              <label className="text-xs font-bold uppercase text-text-muted block mb-1 flex items-center gap-1">
-                <Server className="w-3.5 h-3.5" />
-                FastAPI Backend URL
-              </label>
-              <input
-                type="text"
-                value={settings.backend_url}
-                onChange={(e) => handleChange('backend_url', e.target.value)}
-                placeholder="http://localhost:8000"
-                className="w-full px-3.5 py-2.5 rounded-xl border-2 border-border bg-app text-text-main font-mono text-xs font-bold focus:outline-none focus:border-primary"
-              />
+            <div className="p-3 rounded-xl bg-warning/10 border border-warning/30 text-[11px] text-text-main leading-relaxed">
+              Credentials are stored only in this browser's local storage and are read by anyone who
+              uses this browser profile. They are never sent to the backend and never embedded in the
+              build.
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="sm:col-span-2">
+                <label className="text-xs font-bold uppercase text-text-muted block mb-1">
+                  Broker WebSocket URL
+                </label>
+                <input
+                  type="text"
+                  value={mqtt.url}
+                  onChange={(e) => setMqtt((prev) => ({ ...prev, url: e.target.value }))}
+                  placeholder={DEFAULT_MQTT_CONFIG.URL}
+                  className="w-full px-3.5 py-2.5 rounded-xl border-2 border-border bg-app text-text-main font-mono text-xs font-bold focus:outline-none focus:border-primary"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold uppercase text-text-muted block mb-1">
+                  Username
+                </label>
+                <input
+                  type="text"
+                  value={mqtt.username}
+                  onChange={(e) => setMqtt((prev) => ({ ...prev, username: e.target.value }))}
+                  placeholder="web"
+                  autoComplete="off"
+                  className="w-full px-3.5 py-2.5 rounded-xl border-2 border-border bg-app text-text-main font-mono text-xs font-bold focus:outline-none focus:border-primary"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold uppercase text-text-muted block mb-1">
+                  Password
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type={showMqttPassword ? 'text' : 'password'}
+                    value={mqtt.password}
+                    onChange={(e) => setMqtt((prev) => ({ ...prev, password: e.target.value }))}
+                    placeholder="Broker password"
+                    autoComplete="new-password"
+                    className="w-full px-3.5 py-2.5 rounded-xl border-2 border-border bg-app text-text-main font-mono text-xs font-bold focus:outline-none focus:border-primary"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowMqttPassword((v) => !v)}
+                    className="px-3 py-2.5 rounded-xl border-2 border-border bg-app text-text-muted text-xs font-bold hover:text-text-main min-h-[42px]"
+                  >
+                    {showMqttPassword ? 'Hide' : 'Show'}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold uppercase text-text-muted block mb-1">
+                  Rover ID / Topic Prefix
+                </label>
+                <input
+                  type="text"
+                  value={mqtt.roverId}
+                  onChange={(e) => setMqtt((prev) => ({ ...prev, roverId: e.target.value }))}
+                  placeholder="rover01"
+                  className="w-full px-3.5 py-2.5 rounded-xl border-2 border-border bg-app text-text-main font-mono text-xs font-bold focus:outline-none focus:border-primary"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold uppercase text-text-muted block mb-1 flex items-center gap-1">
+                  <Server className="w-3.5 h-3.5" />
+                  FastAPI Backend URL
+                </label>
+                <input
+                  type="text"
+                  value={settings.backend_url}
+                  onChange={(e) => handleChange('backend_url', e.target.value)}
+                  placeholder="http://localhost:8000"
+                  className="w-full px-3.5 py-2.5 rounded-xl border-2 border-border bg-app text-text-main font-mono text-xs font-bold focus:outline-none focus:border-primary"
+                />
+              </div>
             </div>
           </div>
         </Card>

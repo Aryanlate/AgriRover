@@ -7,8 +7,8 @@ export const BluetoothBanner: React.FC = () => {
   const { isWebBluetoothSupported, transportType, setTransportType } = useRoverStore();
   const [dismissed, setDismissed] = useState(false);
 
-  // Show if Bluetooth is NOT supported and user is in BLE mode or hasn't dismissed
-  if (isWebBluetoothSupported || dismissed) {
+  // Show if Bluetooth is NOT supported and the user is not in MQTT mode
+  if (isWebBluetoothSupported || dismissed || transportType === 'mqtt') {
     return null;
   }
 

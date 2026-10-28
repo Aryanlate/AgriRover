@@ -118,4 +118,4 @@ export type RoverInMessage =
   | MessageFault;
 
 export type TransportStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
-export type TransportType = 'ble' | 'mock';
+export type TransportType = 'ble' | 'mock' | 'mqtt';

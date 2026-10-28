@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
   AlertOctagon,
@@ -9,12 +9,15 @@ import {
   HelpCircle,
   Lightbulb,
   LightbulbOff,
+  Play,
   RefreshCw,
   Sliders,
   Sparkles,
+  Square,
   WifiOff,
 } from 'lucide-react';
 import { useRoverStore } from '../store/roverStore';
+import { isMqttTransport } from '../services/ble';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { EmptyState } from '../components/ui/EmptyState';
@@ -27,14 +30,29 @@ const DATASET_FORM_KEY = 'agri_rover_dataset_form';
 const DATASET_COUNTS_KEY = 'agri_rover_dataset_counts';
 
 export const CameraPage: React.FC = () => {
-  const { send } = useRoverStore();
+  const { send, transport, transportType, mqttDetails } = useRoverStore();
+
+  const mqtt = isMqttTransport(transport) ? transport : null;
 
   const [activeTab, setActiveTab] = useState<CameraTab>('live');
-  const [cameraIp, setCameraIp] = useState('192.168.4.1');
-  const [cameraOnline, setCameraOnline] = useState<boolean | null>(null);
-  const [checkingCamera, setCheckingCamera] = useState(false);
   const [ledOn, setLedOn] = useState(false);
   const [currentPose, setCurrentPose] = useState<'leaf' | 'stem'>('leaf');
+
+  // MQTT CAMERA STATE
+  const [liveFps, setLiveFps] = useState(1);
+  const liveFpsRef = useRef(1);
+  const [liveActive, setLiveActive] = useState(false);
+  const [liveFrameUrl, setLiveFrameUrl] = useState<string | null>(null);
+  const liveFrameUrlRef = useRef<string | null>(null);
+  const liveRenewRef = useRef<number | null>(null);
+
+  const [pendingPhotoRid, setPendingPhotoRid] = useState<string | null>(null);
+  const [photoUrl, setPhotoUrl] = useState<string | null>(null);
+  const photoUrlRef = useRef<string | null>(null);
+  const [photoError, setPhotoError] = useState<string | null>(null);
+
+  const isMqttMode = transportType === 'mqtt';
+  const cameraOnline = isMqttMode && Boolean(mqttDetails?.cameraOnline);
 
   // CHECK TAB STATE
   const [checkPose, setCheckPose] = useState<'leaf' | 'stem'>('leaf');
@@ -72,12 +90,11 @@ export const CameraPage: React.FC = () => {
     };
   });
 
-  // Load camera IP and saved form values on mount
+  // Load saved form values and confidence thresholds on mount
   useEffect(() => {
     apiClient
       .getSettings()
       .then((s) => {
-        if (s.camera_ip) setCameraIp(s.camera_ip);
         if (s.low_confidence) setLowConfidenceThreshold(parseFloat(s.low_confidence) || 0.6);
         if (s.high_confidence) setHighConfidenceThreshold(parseFloat(s.high_confidence) || 0.85);
       })
@@ -95,8 +112,6 @@ export const CameraPage: React.FC = () => {
     } catch {
       // ignore
     }
-
-    checkCameraHealth();
   }, []);
 
   // Save form fields when updated
@@ -111,35 +126,115 @@ export const CameraPage: React.FC = () => {
     }
   }, [plant, plantId, lighting, distanceCm]);
 
-  // Check camera connectivity
-  const checkCameraHealth = async () => {
-    setCheckingCamera(true);
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 1800);
-      await fetch(`http://${cameraIp}/status`, {
-        method: 'GET',
-        signal: controller.signal,
-        mode: 'no-cors',
-      });
-      clearTimeout(timeoutId);
-      setCameraOnline(true);
-    } catch {
-      setCameraOnline(false);
-    } finally {
-      setCheckingCamera(false);
-    }
-  };
+  // Subscribe to MQTT camera frames (live + capture) and clean up on unmount / transport change
+  useEffect(() => {
+    if (!mqtt) return;
 
-  // Toggle LED
+    const offLive = mqtt.onLiveFrame((blobUrl) => {
+      if (liveFrameUrlRef.current) URL.revokeObjectURL(liveFrameUrlRef.current);
+      liveFrameUrlRef.current = blobUrl;
+      setLiveFrameUrl(blobUrl);
+    });
+
+    const offPhoto = mqtt.onPhotoCapture((rid, blobUrl) => {
+      setPhotoError(null);
+      if (photoUrlRef.current) URL.revokeObjectURL(photoUrlRef.current);
+      photoUrlRef.current = blobUrl;
+      setPhotoUrl(blobUrl);
+      setPendingPhotoRid((cur) => (cur === rid ? null : cur));
+    });
+
+    return () => {
+      offLive();
+      offPhoto();
+      if (liveRenewRef.current !== null) {
+        clearInterval(liveRenewRef.current);
+        liveRenewRef.current = null;
+      }
+      if (liveFrameUrlRef.current) {
+        URL.revokeObjectURL(liveFrameUrlRef.current);
+        liveFrameUrlRef.current = null;
+      }
+      if (photoUrlRef.current) {
+        URL.revokeObjectURL(photoUrlRef.current);
+        photoUrlRef.current = null;
+      }
+      // Ask the camera node to stop streaming when we leave the page / switch transport
+      mqtt.publishCamCmd({ cmd: 'live', on: false });
+    };
+  }, [mqtt]);
+
+  // Reset live UI when leaving MQTT mode
+  useEffect(() => {
+    if (transportType !== 'mqtt') setLiveActive(false);
+  }, [transportType]);
+
+  // Toggle flash illumination LED over MQTT
   const handleToggleLed = async () => {
     const nextState = !ledOn;
     setLedOn(nextState);
-    try {
-      await fetch(`http://${cameraIp}/led?on=${nextState ? 1 : 0}`, { mode: 'no-cors' });
-    } catch {
-      // ignore offline error in dev
+    if (mqtt) {
+      await mqtt.publishCamCmd({ cmd: 'led', on: nextState });
     }
+  };
+
+  // Start low-rate live view; renew every 10 s (camera auto-stops after 30 s)
+  const startLive = async () => {
+    if (!mqtt) return;
+    await mqtt.publishCamCmd({ cmd: 'live', on: true, fps: liveFps });
+    setLiveActive(true);
+    if (liveRenewRef.current !== null) clearInterval(liveRenewRef.current);
+    liveRenewRef.current = window.setInterval(() => {
+      mqtt.publishCamCmd({ cmd: 'live', on: true, fps: liveFpsRef.current });
+    }, 10000);
+  };
+
+  // Stop live view and release buffered frame
+  const stopLive = () => {
+    if (liveRenewRef.current !== null) {
+      clearInterval(liveRenewRef.current);
+      liveRenewRef.current = null;
+    }
+    setLiveActive(false);
+    if (mqtt) mqtt.publishCamCmd({ cmd: 'live', on: false });
+    if (liveFrameUrlRef.current) URL.revokeObjectURL(liveFrameUrlRef.current);
+    liveFrameUrlRef.current = null;
+    setLiveFrameUrl(null);
+  };
+
+  // Change live framerate (applies immediately if a stream is running)
+  const handleLiveFpsChange = (fps: number) => {
+    setLiveFps(fps);
+    liveFpsRef.current = fps;
+    if (liveActive && mqtt) {
+      mqtt.publishCamCmd({ cmd: 'live', on: true, fps });
+    }
+  };
+
+  // Capture one photo over MQTT and display the image arriving on cam/img/<rid>
+  const handleCapturePhoto = async () => {
+    if (!mqtt) return;
+    const rid = 'ui_' + Math.random().toString(36).substring(2, 10);
+    setPendingPhotoRid(rid);
+    setPhotoError(null);
+
+    const ok = await mqtt.publishCamCmd({ cmd: 'capture', rid });
+    if (!ok) {
+      setPendingPhotoRid(null);
+      setPhotoError('Failed to publish capture command over MQTT.');
+      return;
+    }
+
+    // Safety timeout so the UI never spins forever
+    window.setTimeout(() => {
+      setPendingPhotoRid((cur) => {
+        if (cur === rid) {
+          setPhotoError('No image received within 5 s. Check that the camera node is online.');
+          return null;
+        }
+        return cur;
+      });
+    }, 5000);
   };
 
   // Set camera pose
@@ -346,30 +441,19 @@ export const CameraPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Camera Offline Warning Banner */}
-      {cameraOnline === false && (
+      {/* Camera Offline Warning Banner (MQTT mode only) */}
+      {isMqttMode && !cameraOnline && (
         <div
           role="alert"
-          className="p-4 rounded-2xl border-2 border-danger bg-danger/10 text-danger flex items-center justify-between gap-4"
+          className="p-4 rounded-2xl border-2 border-danger bg-danger/10 text-danger flex items-center gap-3"
         >
-          <div className="flex items-center gap-3">
-            <WifiOff className="w-6 h-6 flex-shrink-0 animate-pulse" />
-            <div>
-              <span className="font-bold text-sm block">Camera Offline or Unreachable ({cameraIp})</span>
-              <span className="text-xs text-text-muted">
-                Ensure ESP32-CAM is powered, on the same Wi-Fi, and the camera IP matches your Settings.
-              </span>
-            </div>
+          <WifiOff className="w-6 h-6 flex-shrink-0 animate-pulse" />
+          <div>
+            <span className="font-bold text-sm block">Camera Offline or Unreachable</span>
+            <span className="text-xs text-text-muted">
+              The ESP32-CAM has not published cam/status. Ensure it is powered and connected to the broker.
+            </span>
           </div>
-          <Button
-            size="md"
-            variant="secondary"
-            onClick={checkCameraHealth}
-            disabled={checkingCamera}
-            className="text-xs px-3 min-h-[38px] border-danger/50 text-text-main"
-          >
-            {checkingCamera ? 'Checking...' : 'Retry Connection'}
-          </Button>
         </div>
       )}
 
@@ -378,36 +462,114 @@ export const CameraPage: React.FC = () => {
       {/* ========================================================================= */}
       {activeTab === 'live' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Main Video Viewport */}
-          <Card title="Live ESP32-CAM Video Stream" variant="default" className="p-6 lg:col-span-2">
+          {/* Main Frame Viewport */}
+          <Card title="ESP32-CAM Live View (MQTT)" variant="default" className="p-6 lg:col-span-2">
             <div className="relative overflow-hidden rounded-2xl border-2 border-border bg-app aspect-video flex items-center justify-center">
-              {cameraOnline ? (
+              {liveFrameUrl ? (
                 <img
-                  src={`http://${cameraIp}/stream`}
-                  alt="ESP32-CAM Live Stream"
-                  className="w-full h-full object-cover"
-                  onError={() => setCameraOnline(false)}
+                  src={liveFrameUrl}
+                  alt="ESP32-CAM live frame"
+                  className="w-full h-full object-contain"
                 />
               ) : (
                 <EmptyState
                   icon={<Camera className="w-12 h-12 text-text-muted" />}
-                  title="Stream Offline"
-                  message={`Cannot connect to http://${cameraIp}/stream. Make sure the camera is connected or run in simulated mode.`}
-                  actionLabel="Test Camera"
-                  onAction={checkCameraHealth}
+                  title={isMqttMode ? 'Live View Idle' : 'MQTT Required'}
+                  message={
+                    isMqttMode
+                      ? 'Press Start Live to stream low-rate frames over MQTT (cam/live).'
+                      : 'Live view over MQTT requires the MQTT transport. Switch to MQTT in Settings.'
+                  }
                 />
               )}
 
-              {/* Stream Overlay Status */}
+              {/* Live Overlay Status */}
               <div className="absolute top-3 left-3 flex items-center gap-2">
-                <span className="px-2.5 py-1 rounded-lg bg-surface/90 border border-border text-xs font-bold text-text-main backdrop-blur-xs">
-                  IP: {cameraIp}
-                </span>
-                <span className="px-2.5 py-1 rounded-lg bg-surface/90 border border-border text-xs font-bold text-primary backdrop-blur-xs">
-                  SVGA 800x600
+                <span
+                  className={`px-2.5 py-1 rounded-lg bg-surface/90 border border-border text-xs font-bold backdrop-blur-xs ${
+                    liveActive ? 'text-primary' : 'text-text-muted'
+                  }`}
+                >
+                  {liveActive ? `LIVE · ${liveFps} FPS` : 'LIVE OFF'}
                 </span>
               </div>
             </div>
+
+            {/* Live Controls */}
+            <div className="flex flex-wrap items-center gap-3 pt-5">
+              {liveActive ? (
+                <Button variant="danger" onClick={stopLive} icon={<Square className="w-5 h-5" />}>
+                  Stop Live
+                </Button>
+              ) : (
+                <Button
+                  variant="primary"
+                  onClick={startLive}
+                  disabled={!isMqttMode || !cameraOnline}
+                  icon={<Play className="w-5 h-5" />}
+                >
+                  Start Live
+                </Button>
+              )}
+
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-black uppercase text-text-muted">FPS</span>
+                <div className="inline-flex rounded-xl bg-app border-2 border-border p-1 gap-1 text-xs font-bold">
+                  {[1, 2, 3].map((f) => (
+                    <button
+                      key={f}
+                      onClick={() => handleLiveFpsChange(f)}
+                      disabled={!isMqttMode}
+                      aria-pressed={liveFps === f}
+                      className={`px-3.5 py-1.5 rounded-lg transition-colors min-h-[36px] disabled:opacity-50 ${
+                        liveFps === f
+                          ? 'bg-primary text-surface shadow-xs'
+                          : 'text-text-muted hover:text-text-main'
+                      }`}
+                    >
+                      {f}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <Button
+                variant="secondary"
+                onClick={handleCapturePhoto}
+                disabled={!isMqttMode || !cameraOnline || pendingPhotoRid !== null}
+                icon={
+                  pendingPhotoRid ? (
+                    <RefreshCw className="w-5 h-5 animate-spin" />
+                  ) : (
+                    <Camera className="w-5 h-5" />
+                  )
+                }
+              >
+                {pendingPhotoRid ? 'Capturing...' : 'Capture Photo'}
+              </Button>
+            </div>
+
+            {photoError && (
+              <div
+                role="alert"
+                className="mt-4 p-3 rounded-xl border-2 border-danger bg-danger/10 text-danger text-xs font-bold"
+              >
+                {photoError}
+              </div>
+            )}
+
+            {photoUrl && (
+              <div className="mt-4">
+                <div className="text-xs font-black uppercase text-text-muted mb-2">Captured Photo</div>
+                <div className="overflow-hidden rounded-2xl border-2 border-border bg-app aspect-video flex items-center justify-center">
+                  <img
+                    src={photoUrl}
+                    alt="Captured plant photo"
+                    className="w-full h-full object-contain"
+                  />
+                </div>
+              </div>
+            )}
           </Card>
 
           {/* Quick Camera Rig Controls */}

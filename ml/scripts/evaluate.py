@@ -66,40 +66,59 @@ def resolve_test_dir(input_path: Path) -> Path:
     return input_path
 
 
+def gather_split_samples(split_dir: Path, classes: list[str]) -> list[tuple[Path, str, int]]:
+    class_to_idx = {name: i for i, name in enumerate(classes)}
+    valid_exts = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+    samples = []
+    for cls_name in classes:
+        cls_dir = split_dir / cls_name
+        if cls_dir.exists():
+            for img_p in cls_dir.iterdir():
+                if img_p.is_file() and img_p.suffix.lower() in valid_exts:
+                    samples.append((img_p, cls_name, class_to_idx[cls_name]))
+    return samples
+
+
 def evaluate_model(model_path: Path, test_dir: Path, report_path: Path, device: str = ""):
     test_dir = resolve_test_dir(test_dir)
     classes = load_classes()
     class_to_idx = {name: i for i, name in enumerate(classes)}
     num_classes = len(classes)
-    valid_exts = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+
+    # Required warning from task specification
+    print("\n" + "=" * 60)
+    print("Warning: Test images are public images, not ESP32-CAM photos. Real accuracy on the rover may be lower.")
+    print("=" * 60 + "\n")
 
     # Gather test samples
-    samples = []  # list of (image_path, true_class_name, true_class_idx)
-    for cls_name in classes:
-        cls_dir = test_dir / cls_name
-        if cls_dir.exists():
-            for img_p in cls_dir.iterdir():
-                if img_p.is_file() and img_p.suffix.lower() in valid_exts:
-                    samples.append((img_p, cls_name, class_to_idx[cls_name]))
+    samples = gather_split_samples(test_dir, classes)
+    used_val_fallback = False
+
+    # If test is empty, use val and say so
+    if len(samples) == 0:
+        val_candidate = test_dir.parent / "val"
+        val_samples = gather_split_samples(val_candidate, classes) if val_candidate.exists() else []
+        if len(val_samples) > 0:
+            print(f"[INFO] Test split at '{test_dir}' is empty. Using val split ('{val_candidate}') for evaluation instead.")
+            samples = val_samples
+            test_dir = val_candidate
+            used_val_fallback = True
+        else:
+            print(f"[WARNING] Both test split '{test_dir}' and val split '{val_candidate}' are empty.")
 
     total_samples = len(samples)
-    print(f"Loaded {total_samples} test images from {test_dir}")
+    print(f"Loaded {total_samples} images for evaluation from {test_dir} (Split: {'val' if used_val_fallback else 'test'})")
 
     if total_samples == 0:
         msg = (
-            "# Agri-Rover Test Split Evaluation Report\n\n"
+            "# Agri-Rover Evaluation Report\n\n"
             f"- **Date**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
             f"- **Model**: `{model_path}`\n"
-            f"- **Status**: No test images found in `{test_dir}`.\n\n"
-            "Please populate `ml/dataset/test/` with rover test photos to run evaluation.\n"
+            f"- **Status**: No images found in test or val splits.\n\n"
+            "> **Warning**: Test images are public images, not ESP32-CAM photos. Real accuracy on the rover may be lower.\n"
         )
         report_path.write_text(msg, encoding="utf-8")
-        print(f"[WARNING] No test images found. Empty report written to {report_path}")
-        print("\n============================================================")
-        print("AGRI-ROVER PERFORMANCE GOALS (NO DATA IN TEST SPLIT)")
-        print("Goal 1: Overall accuracy >= 85.0% on test photos: [PENDING - NO DATA]")
-        print("Goal 2: No class recall below 0.70:               [PENDING - NO DATA]")
-        print("============================================================\n")
+        print(f"[WARNING] No images found. Empty report written to {report_path}")
         return
 
     from ultralytics import YOLO
@@ -233,21 +252,27 @@ def evaluate_model(model_path: Path, test_dir: Path, report_path: Path, device: 
 
     report_content = "\n".join(lines) + "\n"
     report_path.write_text(report_content, encoding="utf-8")
-    print(f"\nReport written to: {report_path}")
+    print(f"Report written to: {report_path}")
 
-    # Terminal output of goals
+    # Terminal output
     print("\n" + "=" * 60)
-    print("AGRI-ROVER PERFORMANCE GOALS EVALUATION")
+    print("EVALUATION RESULTS")
     print("=" * 60)
-    print(f"Goal 1: Overall accuracy >= 85.0% on test photos")
-    print(f"        Result: {overall_acc * 100:.2f}% -> [{'PASS' if pass_acc else 'FAIL'}]")
-    print(f"Goal 2: No class recall below 0.70")
-    print(f"        Result: Min recall = {min_recall:.3f} ({min_recall_cls}) -> [{'PASS' if pass_recall else 'FAIL'}]")
-    print("-" * 60)
-    if pass_acc and pass_recall:
-        print("ALL GOALS MET: Model satisfies Agri-Rover mission deployment criteria.")
-    else:
-        print("GOALS NOT MET: Model requires dataset expansion or additional training.")
+    print(f"Top-1 Accuracy: {overall_acc * 100:.2f}%\n")
+    print("Per-Class Metrics:")
+    for name in classes:
+        s = per_class_stats[name]
+        print(f"  - {name:<15}: Precision = {s['precision']:.3f}, Recall = {s['recall']:.3f}, F1 = {s['f1']:.3f} (Support: {s['support']})")
+
+    print("\nConfusion Matrix (Rows: True, Cols: Pred):")
+    header_str = " " * 18 + "".join(f"{c:>16}" for c in classes)
+    print(header_str)
+    for i, name in enumerate(classes):
+        row_str = f"{name:<18}" + "".join(f"{cm[i][c]:>16}" for c in range(num_classes))
+        print(row_str)
+
+    print("\n" + "=" * 60)
+    print("Warning: Test images are public images, not ESP32-CAM photos. Real accuracy on the rover may be lower.")
     print("=" * 60 + "\n")
 
 

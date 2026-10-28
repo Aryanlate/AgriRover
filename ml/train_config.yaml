@@ -1,28 +1,49 @@
 # Agri-Rover YOLOv8n-cls Training Configuration
-# Model & Dataset
+# Active profile mode: 'auto' (detects GPU vs CPU), 'gpu', or 'cpu'
+mode: auto
+
+# Base Model Architecture
 model: yolov8n-cls.pt
-data: ml/dataset
-imgsz: 224
-epochs: 50
-patience: 10
-batch: 16
-workers: 2 # safe default across Windows and Linux
-device: null # null for auto-detect (CUDA if available, else CPU)
-optimizer: auto
-lr0: 0.001
 
-# Augmentation Parameters (brightness, blur, rotation, flip, scale)
-degrees: 15.0         # Rotation (+/- 15 degrees)
-fliplr: 0.5           # Horizontal flip probability
-flipud: 0.5           # Vertical flip probability
-scale: 0.2            # Scale gain (+/- 20%)
-hsv_v: 0.4            # Brightness (HSV-Value gain)
-hsv_s: 0.3            # Saturation (HSV-Saturation gain)
-hsv_h: 0.015          # Hue (HSV-Hue gain)
-auto_augment: randaugment # RandAugment includes blur, sharpness, and color jitter
-erasing: 0.1          # Random erasing
-
-# Output directories
+# Output Directory
 project: ml/runs
 name: agrirover_cls
 exist_ok: true
+
+# -----------------------------------------------------------------------------
+# GPU Training Profile (used if CUDA is available or mode is 'gpu')
+# -----------------------------------------------------------------------------
+gpu_settings:
+  data: ml/runs/cls_data
+  max_samples_per_class: null # Full train set
+  epochs: 30                  # Up to 30 epochs
+  patience: 5                 # Early stopping patience 5
+  batch: 32                   # Batch size for GPU VRAM
+  imgsz: 224                  # 224x224 input resolution
+  workers: 4                  # DataLoader parallel workers
+  device: 0                   # CUDA device 0
+
+# -----------------------------------------------------------------------------
+# CPU Training Profile (used if no GPU is available or mode is 'cpu')
+# -----------------------------------------------------------------------------
+cpu_settings:
+  data: ml/runs/cls_data
+  max_samples_per_class: 1000 # Random sample of at most 1000 train images per class
+  sample_seed: 42             # Fixed seed for reproducible sampling
+  epochs: 15                  # Up to 15 epochs
+  patience: 5                 # Early stopping patience 5
+  batch: 16                   # Batch size that fits safely in system RAM
+  imgsz: 224                  # 224x224 input resolution
+  workers: 2                  # Safe workers count for Windows CPU
+  device: cpu                 # Force CPU execution
+
+# -----------------------------------------------------------------------------
+# Standard Augmentations (rotation, flip, scale, colour)
+# -----------------------------------------------------------------------------
+degrees: 15.0 # Rotation (+/- 15 degrees)
+fliplr: 0.5   # Horizontal flip probability
+flipud: 0.5   # Vertical flip probability
+scale: 0.2    # Scale gain (+/- 20%)
+hsv_v: 0.4    # Brightness (HSV-Value gain)
+hsv_s: 0.3    # Saturation (HSV-Saturation gain)
+hsv_h: 0.015  # Hue (HSV-Hue gain)

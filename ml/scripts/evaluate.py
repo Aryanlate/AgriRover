@@ -23,7 +23,6 @@ DEFAULT_REPORT_PATH = ML_DIR / "evaluation_report.md"
 CLASSES_FILE = ML_DIR / "dataset" / "classes.txt"
 
 LEAF_CLASSES = {"leaf_healthy", "leaf_diseased"}
-STEM_CLASSES = {"stem_healthy", "stem_diseased"}
 
 
 def load_classes() -> list[str]:
@@ -32,7 +31,7 @@ def load_classes() -> list[str]:
             classes = [line.strip() for line in f if line.strip()]
         if classes:
             return classes
-    return ["leaf_healthy", "leaf_diseased", "stem_healthy", "stem_diseased", "background"]
+    return ["leaf_healthy", "leaf_diseased", "background"]
 
 
 def find_default_weights() -> Path:
@@ -170,11 +169,6 @@ def evaluate_model(model_path: Path, test_dir: Path, report_path: Path, device: 
     leaf_correct = sum(1 for p in predictions if p["true_name"] in LEAF_CLASSES and p["correct"])
     leaf_acc = leaf_correct / len(leaf_samples) if leaf_samples else 0.0
 
-    # Stem classes separate evaluation
-    stem_samples = [s for s in samples if s[1] in STEM_CLASSES]
-    stem_correct = sum(1 for p in predictions if p["true_name"] in STEM_CLASSES and p["correct"])
-    stem_acc = stem_correct / len(stem_samples) if stem_samples else 0.0
-
     # Background evaluation
     bg_samples = [s for s in samples if s[1] == "background"]
     bg_correct = sum(1 for p in predictions if p["true_name"] == "background" and p["correct"])
@@ -188,7 +182,10 @@ def evaluate_model(model_path: Path, test_dir: Path, report_path: Path, device: 
 
     # Generate Markdown Report
     lines = [
-        "# Agri-Rover Test Split Evaluation Report",
+        "# Agri-Rover Leaf-Only Test Split Evaluation Report",
+        "",
+        "> [!WARNING]",
+        "> **Notice**: The test set is **not** from ESP32-CAM photos. It evaluates performance on public leaf benchmark images. Domain shift may occur on physical rover hardware.",
         "",
         f"- **Timestamp**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         f"- **Model Weights**: `{model_path}`",
@@ -202,43 +199,18 @@ def evaluate_model(model_path: Path, test_dir: Path, report_path: Path, device: 
         f"| **Top-1 Accuracy** | **{overall_acc * 100:.2f}%** | >= 85.0% | {'PASS' if pass_acc else 'FAIL'} |",
         f"| **Minimum Class Recall** | **{min_recall * 100:.2f}%** (`{min_recall_cls}`) | >= 70.0% | {'PASS' if pass_recall else 'FAIL'} |",
         "",
-        "## Separate Part Breakdown (Leaf vs Stem)",
+        "## Part Breakdown",
         "",
         "| Plant Part | Samples | Correct | Accuracy | Part Classes |",
         "|---|---|---|---|---|",
         f"| **Leaf Part** | {len(leaf_samples)} | {leaf_correct} | {leaf_acc * 100:.2f}% | `leaf_healthy`, `leaf_diseased` |",
-        f"| **Stem Part** | {len(stem_samples)} | {stem_correct} | {stem_acc * 100:.2f}% | `stem_healthy`, `stem_diseased` |",
         f"| **Background** | {len(bg_samples)} | {bg_correct} | {bg_acc * 100:.2f}% | `background` |",
         "",
-        "### Leaf Classes Detail",
-        "",
-        "| Class | Support | Precision | Recall | F1-Score |",
-        "|---|---|---|---|---|",
-    ]
-
-    for name in ["leaf_healthy", "leaf_diseased"]:
-        s = per_class_stats[name]
-        lines.append(f"| `{name}` | {s['support']} | {s['precision']:.3f} | {s['recall']:.3f} | {s['f1']:.3f} |")
-
-    lines.extend([
-        "",
-        "### Stem Classes Detail",
-        "",
-        "| Class | Support | Precision | Recall | F1-Score |",
-        "|---|---|---|---|---|",
-    ])
-
-    for name in ["stem_healthy", "stem_diseased"]:
-        s = per_class_stats[name]
-        lines.append(f"| `{name}` | {s['support']} | {s['precision']:.3f} | {s['recall']:.3f} | {s['f1']:.3f} |")
-
-    lines.extend([
-        "",
-        "## Per-Class Metrics (All 5 Classes)",
+        "## Per-Class Metrics",
         "",
         "| Class | Support | Precision | Recall | F1-Score | Status (Recall >= 0.70) |",
         "|---|---|---|---|---|---|",
-    ])
+    ]
 
     for name in classes:
         s = per_class_stats[name]

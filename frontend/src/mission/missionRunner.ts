@@ -331,7 +331,7 @@ export class MissionRunner {
         const moisturePct = this.calculateSoilMoisture(moistureRaw);
         if (!(await this.waitIfPaused())) break;
 
-        // 4. Step: Vision Inspection - Pose Leaf & Scan
+        // 4. Step: Vision Inspection - Pose Leaf & Scan (Leaf-only)
         this.subStep = 'scanning_leaf';
         this.notify();
         await this.deps.transport.send({ c: 'camtilt', pose: 'leaf' });
@@ -339,22 +339,13 @@ export class MissionRunner {
         let leafScan = await this.deps.apiClient.scan('leaf', plantLabel, this.backendRunId ?? undefined);
         if (!(await this.waitIfPaused())) break;
 
-        // 5. Step: Vision Inspection - Pose Stem & Scan
-        this.subStep = 'scanning_stem';
-        this.notify();
-        await this.deps.transport.send({ c: 'camtilt', pose: 'stem' });
-        await this.sleep(400);
-        let stemScan = await this.deps.apiClient.scan('stem', plantLabel, this.backendRunId ?? undefined);
-        if (!(await this.waitIfPaused())) break;
-
-        // 6. Step: Decision Engine
+        // 5. Step: Decision Engine (Leaf results only)
         this.subStep = 'deciding';
         this.notify();
         let retryCount = 0;
         let decision = await this.deps.apiClient.decide({
           moisture_pct: moisturePct,
           leaf_result: leafScan?.result,
-          stem_result: stemScan?.result,
           tank_estimates: { water_ml: this.waterRemainingMl, treatment_ml: this.treatRemainingMl },
           battery_status: tel?.bat,
           estop: false,
@@ -372,16 +363,9 @@ export class MissionRunner {
           await this.sleep(400);
           leafScan = await this.deps.apiClient.scan('leaf', plantLabel, this.backendRunId ?? undefined);
 
-          this.subStep = 'scanning_stem';
-          this.notify();
-          await this.deps.transport.send({ c: 'camtilt', pose: 'stem' });
-          await this.sleep(400);
-          stemScan = await this.deps.apiClient.scan('stem', plantLabel, this.backendRunId ?? undefined);
-
           decision = await this.deps.apiClient.decide({
             moisture_pct: moisturePct,
             leaf_result: leafScan?.result,
-            stem_result: stemScan?.result,
             tank_estimates: { water_ml: this.waterRemainingMl, treatment_ml: this.treatRemainingMl },
             battery_status: tel?.bat,
             estop: false,
@@ -445,8 +429,6 @@ export class MissionRunner {
           moisturePct,
           leafState: leafScan?.result?.state,
           leafConfidence: leafScan?.result?.confidence,
-          stemState: stemScan?.result?.state,
-          stemConfidence: stemScan?.result?.confidence,
           actionsExecuted: executedNames,
           skippedActions: skippedNames,
           waterDispensedMl: plantWaterDispensed,

@@ -1,9 +1,8 @@
 """
 Image Classifier Module:
 - Loads weights from ml/models/best.pt if present; otherwise runs in mock-model mode.
-- Evaluates 5 classes: leaf_healthy, leaf_diseased, stem_healthy, stem_diseased, background.
-- Given pose ('leaf' or 'stem'), keeps only that part's classes + background.
-- Renormalises probabilities and returns {part, state: healthy | diseased | no_plant, confidence}.
+- Evaluates leaf-only classes: leaf_healthy, leaf_diseased, and background.
+- Renormalises probabilities and returns {part: "leaf", state: healthy | diseased | no_plant, confidence}.
 - Uses ml/models/labels.json for class-to-part mapping.
 """
 
@@ -22,8 +21,6 @@ logger = logging.getLogger("agrirover.classifier")
 ALL_CLASSES = [
     "leaf_healthy",
     "leaf_diseased",
-    "stem_healthy",
-    "stem_diseased",
     "background"
 ]
 
@@ -47,8 +44,6 @@ class PlantClassifier:
         return {
             "leaf_healthy": "leaf",
             "leaf_diseased": "leaf",
-            "stem_healthy": "stem",
-            "stem_diseased": "stem",
             "background": "none"
         }
 
@@ -77,36 +72,22 @@ class PlantClassifier:
                 logger.error(f"Failed to load model from {self.model_path}: {e2}. Falling back to MOCK mode.")
                 self.is_mock = True
 
-    def _mock_predict(self, image_bytes: bytes, pose: str) -> Dict[str, float]:
-        """Generate deterministic, realistic 5-class probability vector for mock mode."""
-        # Use simple byte-based pseudo-randomness for reproducibility across identical images
+    def _mock_predict(self, image_bytes: bytes, pose: str = "leaf") -> Dict[str, float]:
+        """Generate deterministic, realistic leaf-only probability vector for mock mode."""
         seed = len(image_bytes) % 1000
         rng = random.Random(seed)
 
-        # Baseline probabilities
-        if pose == "stem":
-            probs = {
-                "stem_diseased": rng.uniform(0.70, 0.95),
-                "stem_healthy": rng.uniform(0.05, 0.20),
-                "background": rng.uniform(0.01, 0.08),
-                "leaf_healthy": 0.01,
-                "leaf_diseased": 0.01,
-            }
-        else:
-            # default to leaf
-            probs = {
-                "leaf_diseased": rng.uniform(0.70, 0.95),
-                "leaf_healthy": rng.uniform(0.05, 0.20),
-                "background": rng.uniform(0.01, 0.08),
-                "stem_healthy": 0.01,
-                "stem_diseased": 0.01,
-            }
+        probs = {
+            "leaf_diseased": rng.uniform(0.65, 0.90),
+            "leaf_healthy": rng.uniform(0.10, 0.25),
+            "background": rng.uniform(0.01, 0.08),
+        }
 
         total = sum(probs.values())
         return {k: v / total for k, v in probs.items()}
 
     def _real_predict(self, image_bytes: bytes) -> Dict[str, float]:
-        """Run real inference on image bytes returning 5-class probabilities."""
+        """Run real inference on image bytes returning probabilities."""
         img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
         try:
@@ -117,45 +98,42 @@ class PlantClassifier:
                 names = results[0].names
                 raw = {names[i]: float(probs_data[i]) for i in range(len(names))}
             else:
-                # Fallback to mock if output structure is unexpected
                 raw = self._mock_predict(image_bytes, "leaf")
         except Exception as e:
             logger.error(f"Inference error: {e}")
             raw = self._mock_predict(image_bytes, "leaf")
 
-        # Ensure all 5 classes are present
+        # Ensure all leaf-only classes are present
         res = {}
         for c in ALL_CLASSES:
             res[c] = float(raw.get(c, 0.001))
         total = sum(res.values())
         return {k: v / total for k, v in res.items()}
 
-    def classify(self, image_bytes: bytes, pose: str) -> Dict[str, Any]:
+    def classify(self, image_bytes: bytes, pose: str = "leaf") -> Dict[str, Any]:
         """
-        Run classifier on one image and process for the given pose (leaf or stem):
-        1. Keep only that part's classes plus background.
+        Run classifier on one image for leaf inspection:
+        1. Keep only leaf classes plus background.
         2. Renormalise probabilities.
-        3. Return {part, state: healthy | diseased | no_plant, confidence, class_name, ...}
+        3. Return {part: "leaf", state: healthy | diseased | no_plant, confidence, class_name, ...}
         """
-        pose = pose.lower().strip()
-        if pose not in ["leaf", "stem"]:
-            pose = "leaf"
+        part = "leaf"
 
         if self.is_mock or self.model is None:
-            raw_probs = self._mock_predict(image_bytes, pose)
+            raw_probs = self._mock_predict(image_bytes, "leaf")
         else:
             raw_probs = self._real_predict(image_bytes)
 
-        # Filter: keep only classes belonging to this pose or background ("none")
+        # Filter: keep only classes belonging to leaf or background ("none")
         filtered_probs = {}
         for cls_name, prob in raw_probs.items():
             cls_part = self.labels_map.get(cls_name, "none")
-            if cls_part == pose or cls_name == "background" or cls_part == "none":
+            if cls_part == "leaf" or cls_name == "background" or cls_part == "none":
                 filtered_probs[cls_name] = prob
 
-        # If somehow none matched, fallback to the two pose classes + background
+        # If empty, fallback to default leaf classes + background
         if not filtered_probs:
-            for c in [f"{pose}_healthy", f"{pose}_diseased", "background"]:
+            for c in ["leaf_healthy", "leaf_diseased", "background"]:
                 filtered_probs[c] = raw_probs.get(c, 0.33)
 
         # Renormalise
@@ -181,7 +159,7 @@ class PlantClassifier:
             state = "no_plant"
 
         return {
-            "part": pose,
+            "part": part,
             "state": state,
             "confidence": round(confidence, 4),
             "class_name": winning_class,

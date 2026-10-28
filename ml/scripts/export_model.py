@@ -18,12 +18,10 @@ DEST_WEIGHTS = MODELS_DIR / "best.pt"
 DEST_ONNX = MODELS_DIR / "best.onnx"
 DEST_LABELS = MODELS_DIR / "labels.json"
 
-# Mapping each class to its part (leaf, stem or none)
+# Mapping each class to its part (leaf or none)
 CLASS_PARTS = {
     "leaf_healthy": "leaf",
     "leaf_diseased": "leaf",
-    "stem_healthy": "stem",
-    "stem_diseased": "stem",
     "background": "none"
 }
 

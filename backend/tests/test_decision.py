@@ -1,13 +1,14 @@
 """
-Unit tests for app/decision.py covering every rule:
+Unit tests for app/decision.py covering every leaf-only rule:
 1. Water if moisture < threshold (dose capped).
-2. For each part, treat if state is diseased at or above high confidence (stem marked high severity).
+2. Use leaf results only: treat if state is diseased at or above high confidence (aimed at leaf).
 3. Diseased between low and high is unsure and never sprayed.
 4. Healthy = no action.
-5. no_plant = no_plant_found with a retry flag (retry once, then skip).
+5. no_plant / background = no_plant_found with a retry flag (retry once, then skip).
 6. Block all spraying if battery low, tank estimate low, or E-stop.
 7. Per-plant and per-run dose caps.
 8. Always give a reason for every skipped action.
+9. Verify stem results are ignored (leaf-only).
 """
 
 import pytest
@@ -18,11 +19,6 @@ SAMPLE_TREATMENTS = {
         "treatment": "Copper Hydroxide 2g/L",
         "dose_ml": 25.0,
         "severity": "medium"
-    },
-    "stem_diseased": {
-        "treatment": "Systemic Fungicide 1.5ml/L",
-        "dose_ml": 20.0,
-        "severity": "high"
     }
 }
 
@@ -45,7 +41,6 @@ def test_water_when_moisture_below_threshold():
         moisture_pct=25.0,
         thresholds=DEFAULT_THRESHOLDS,
         leaf_result=None,
-        stem_result=None,
         low_confidence=0.60,
         high_confidence=0.85,
         treatments=SAMPLE_TREATMENTS
@@ -63,7 +58,6 @@ def test_no_water_when_moisture_above_or_equal_threshold():
         moisture_pct=40.0,
         thresholds=DEFAULT_THRESHOLDS,
         leaf_result=None,
-        stem_result=None,
         low_confidence=0.60,
         high_confidence=0.85,
         treatments=SAMPLE_TREATMENTS
@@ -75,33 +69,49 @@ def test_no_water_when_moisture_above_or_equal_threshold():
     assert "watering not required" in skipped_water[0]["reason"]
 
 
-def test_treat_diseased_above_high_confidence_leaf_and_stem():
-    """Rule 2: treat if state is diseased at or above high confidence. Stem marked high severity."""
+def test_treat_diseased_above_high_confidence_leaf_only():
+    """Rule 2: treat if leaf state is diseased at or above high confidence."""
     leaf_res = {"part": "leaf", "state": "diseased", "confidence": 0.90}
-    stem_res = {"part": "stem", "state": "diseased", "confidence": 0.88}
 
     res = evaluate_decision(
         moisture_pct=50.0,
         thresholds=DEFAULT_THRESHOLDS,
         leaf_result=leaf_res,
-        stem_result=stem_res,
         low_confidence=0.60,
         high_confidence=0.85,
         treatments=SAMPLE_TREATMENTS
     )
 
     treat_actions = [a for a in res["actions"] if a["type"] == "treat"]
-    assert len(treat_actions) == 2
+    assert len(treat_actions) == 1
 
-    leaf_action = next(a for a in treat_actions if a["part"] == "leaf")
+    leaf_action = treat_actions[0]
+    assert leaf_action["part"] == "leaf"
+    assert leaf_action["target"] == "leaf"
     assert leaf_action["treatment"] == "Copper Hydroxide 2g/L"
     assert leaf_action["severity"] == "medium"
     assert leaf_action["dose_ml"] == 25.0
+    assert leaf_action["duration_ms"] == 1250  # 25ml / 20ml/s * 1000ms
 
-    stem_action = next(a for a in treat_actions if a["part"] == "stem")
-    assert stem_action["treatment"] == "Systemic Fungicide 1.5ml/L"
-    assert stem_action["severity"] == "high"  # Stem explicitly marked high severity
-    assert stem_action["dose_ml"] == 20.0
+
+def test_stem_result_is_ignored():
+    """Rule 9: stem result is completely ignored in leaf-only decision engine."""
+    leaf_res = {"part": "leaf", "state": "healthy", "confidence": 0.95}
+    stem_res = {"part": "stem", "state": "diseased", "confidence": 0.99}
+
+    res = evaluate_decision(
+        moisture_pct=50.0,
+        thresholds=DEFAULT_THRESHOLDS,
+        leaf_result=leaf_res,
+        stem_result=stem_res,  # Passed, but must not produce any stem treat action
+        low_confidence=0.60,
+        high_confidence=0.85,
+        treatments=SAMPLE_TREATMENTS
+    )
+
+    treat_actions = [a for a in res["actions"] if a["type"] == "treat"]
+    assert len(treat_actions) == 0
+    assert not any(a.get("part") == "stem" for a in res["actions"])
 
 
 def test_diseased_between_low_and_high_is_unsure_never_sprayed():
@@ -112,7 +122,6 @@ def test_diseased_between_low_and_high_is_unsure_never_sprayed():
         moisture_pct=50.0,
         thresholds=DEFAULT_THRESHOLDS,
         leaf_result=leaf_res,
-        stem_result=None,
         low_confidence=0.60,
         high_confidence=0.85,
         treatments=SAMPLE_TREATMENTS
@@ -134,7 +143,6 @@ def test_diseased_below_low_confidence_never_sprayed():
         moisture_pct=50.0,
         thresholds=DEFAULT_THRESHOLDS,
         leaf_result=leaf_res,
-        stem_result=None,
         low_confidence=0.60,
         high_confidence=0.85,
         treatments=SAMPLE_TREATMENTS
@@ -154,7 +162,6 @@ def test_healthy_is_no_action():
         moisture_pct=50.0,
         thresholds=DEFAULT_THRESHOLDS,
         leaf_result=leaf_res,
-        stem_result=None,
         low_confidence=0.60,
         high_confidence=0.85,
         treatments=SAMPLE_TREATMENTS
@@ -166,7 +173,7 @@ def test_healthy_is_no_action():
 
 
 def test_no_plant_retry_flag_retry_once_then_skip():
-    """Rule 5: no_plant = no_plant_found with a retry flag (retry once, then skip)."""
+    """Rule 5: no_plant (background) = no_plant_found with a retry flag (retry once, then skip)."""
     leaf_res = {"part": "leaf", "state": "no_plant", "confidence": 0.90}
 
     # Initial scan (retry_count == 0) -> should flag retry_needed = True
@@ -174,7 +181,6 @@ def test_no_plant_retry_flag_retry_once_then_skip():
         moisture_pct=50.0,
         thresholds=DEFAULT_THRESHOLDS,
         leaf_result=leaf_res,
-        stem_result=None,
         low_confidence=0.60,
         high_confidence=0.85,
         treatments=SAMPLE_TREATMENTS,
@@ -189,7 +195,6 @@ def test_no_plant_retry_flag_retry_once_then_skip():
         moisture_pct=50.0,
         thresholds=DEFAULT_THRESHOLDS,
         leaf_result=leaf_res,
-        stem_result=None,
         low_confidence=0.60,
         high_confidence=0.85,
         treatments=SAMPLE_TREATMENTS,
@@ -206,7 +211,6 @@ def test_estop_blocks_all_spraying():
         moisture_pct=20.0,
         thresholds=DEFAULT_THRESHOLDS,
         leaf_result={"part": "leaf", "state": "diseased", "confidence": 0.92},
-        stem_result={"part": "stem", "state": "diseased", "confidence": 0.95},
         low_confidence=0.60,
         high_confidence=0.85,
         treatments=SAMPLE_TREATMENTS,
@@ -224,7 +228,6 @@ def test_low_battery_blocks_all_spraying():
         moisture_pct=20.0,
         thresholds=DEFAULT_THRESHOLDS,
         leaf_result={"part": "leaf", "state": "diseased", "confidence": 0.92},
-        stem_result=None,
         low_confidence=0.60,
         high_confidence=0.85,
         treatments=SAMPLE_TREATMENTS,
@@ -243,7 +246,6 @@ def test_low_tank_estimates_block_spraying():
         moisture_pct=20.0,
         thresholds=DEFAULT_THRESHOLDS,
         leaf_result=None,
-        stem_result=None,
         low_confidence=0.60,
         high_confidence=0.85,
         treatments=SAMPLE_TREATMENTS,
@@ -257,7 +259,6 @@ def test_low_tank_estimates_block_spraying():
         moisture_pct=50.0,
         thresholds=DEFAULT_THRESHOLDS,
         leaf_result={"part": "leaf", "state": "diseased", "confidence": 0.95},
-        stem_result=None,
         low_confidence=0.60,
         high_confidence=0.85,
         treatments=SAMPLE_TREATMENTS,
@@ -274,7 +275,6 @@ def test_per_plant_and_per_run_dose_caps():
         moisture_pct=20.0,
         thresholds=DEFAULT_THRESHOLDS,
         leaf_result=None,
-        stem_result=None,
         low_confidence=0.60,
         high_confidence=0.85,
         treatments=SAMPLE_TREATMENTS,
@@ -289,7 +289,6 @@ def test_per_plant_and_per_run_dose_caps():
         moisture_pct=20.0,
         thresholds=DEFAULT_THRESHOLDS,
         leaf_result=None,
-        stem_result=None,
         low_confidence=0.60,
         high_confidence=0.85,
         treatments=SAMPLE_TREATMENTS,
@@ -304,7 +303,6 @@ def test_per_plant_and_per_run_dose_caps():
         moisture_pct=50.0,
         thresholds=DEFAULT_THRESHOLDS,
         leaf_result={"part": "leaf", "state": "diseased", "confidence": 0.90},
-        stem_result=None,
         low_confidence=0.60,
         high_confidence=0.85,
         treatments=SAMPLE_TREATMENTS,
@@ -321,7 +319,6 @@ def test_every_skipped_action_has_a_reason():
         moisture_pct=60.0,
         thresholds=DEFAULT_THRESHOLDS,
         leaf_result={"part": "leaf", "state": "healthy", "confidence": 0.98},
-        stem_result={"part": "stem", "state": "no_plant", "confidence": 0.90},
         low_confidence=0.60,
         high_confidence=0.85,
         treatments=SAMPLE_TREATMENTS

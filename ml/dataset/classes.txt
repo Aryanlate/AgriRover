@@ -1,5 +1,3 @@
 leaf_healthy
 leaf_diseased
-stem_healthy
-stem_diseased
 background

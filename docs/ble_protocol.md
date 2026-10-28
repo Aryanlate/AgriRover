@@ -8,7 +8,7 @@ Messages: one JSON object per line, newline terminated, chunked to the MTU.
 Website -> ESP32 (field c = command):
   hb | drive{l,r} (-100..100) | stop | estop_reset | mode{m: idle|manual|mission}
   move{mm} | turn{deg} | probe{a: down|up|read} | nozzle{pan,tilt}
-  camtilt{pose: leaf|stem} | pump{id: water|treat, ms} | cfg{k,v} | selftest
+  camtilt{pose: leaf|stem} (only leaf pose used) | pump{id: water|treat, ms} | cfg{k,v} | selftest
  
 ESP32 -> website (field t = type):
   tel{bat,mode,soil,temp,hum,tilt,dist,probe,enc} at 5 Hz

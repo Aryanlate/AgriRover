@@ -5,11 +5,11 @@ Unit tested with pytest.
 
 Rules:
 1. Water if moisture < threshold (dose capped).
-2. For each part (leaf, stem), treat if state is diseased at or above high confidence,
-   using treatment from treatments.json for leaf_diseased or stem_diseased (stem marked high severity).
-3. Diseased between low and high confidence is unsure and never sprayed.
-4. Healthy = no action.
-5. no_plant = no_plant_found with a retry flag (retry once, then skip).
+2. Use leaf results only. Treat (tank 2) if leaf state is diseased at or above high confidence,
+   aiming at the leaf target using treatment from treatments.json ("leaf_diseased").
+3. Leaf diseased between low and high confidence is unsure and never sprayed.
+4. Leaf healthy = no action.
+5. Leaf no_plant = no_plant_found with a retry flag (retry once, then skip).
 6. Block all spraying if battery low, tank estimate low, or E-stop active.
 7. Enforce per-plant and per-run dose caps for both water and treatments.
 8. Always provide a clear reason for every skipped action.
@@ -48,10 +48,10 @@ def evaluate_decision(
     moisture_pct: Optional[float],
     thresholds: Dict[str, float],
     leaf_result: Optional[Dict[str, Any]],
-    stem_result: Optional[Dict[str, Any]],
-    low_confidence: float,
-    high_confidence: float,
-    treatments: Dict[str, Any],
+    stem_result: Optional[Dict[str, Any]] = None,
+    low_confidence: float = 0.60,
+    high_confidence: float = 0.85,
+    treatments: Optional[Dict[str, Any]] = None,
     tank_estimates: Optional[Dict[str, float]] = None,
     battery_status: Optional[Dict[str, Any]] = None,
     estop: bool = False,
@@ -61,7 +61,7 @@ def evaluate_decision(
     dose_caps: Optional[Dict[str, float]] = None
 ) -> Dict[str, Any]:
     """
-    Pure decision evaluation function.
+    Pure decision evaluation function using leaf results only.
     Returns:
     {
         "ok": bool,
@@ -75,6 +75,8 @@ def evaluate_decision(
     actions: List[Dict[str, Any]] = []
     skipped_actions: List[Dict[str, Any]] = []
     retry_needed = False
+
+    treatments_map = treatments or {}
 
     # Defaults and limits
     plant_hist = plant_history or {}
@@ -170,47 +172,40 @@ def evaluate_decision(
             run_watered += water_dose
 
     # ----------------------------------------------------
-    # 2. VISION / TREATMENT DECISIONS (LEAF & STEM)
+    # 2. VISION / TREATMENT DECISION (LEAF RESULTS ONLY)
     # ----------------------------------------------------
-    part_results = [
-        ("leaf", leaf_result),
-        ("stem", stem_result)
-    ]
-
-    for part_name, p_result in part_results:
-        if not p_result:
-            skipped_actions.append({
-                "type": "treat",
-                "part": part_name,
-                "reason": f"No {part_name} scan result provided"
-            })
-            continue
-
-        state = p_result.get("state")
-        confidence = float(p_result.get("confidence", 0.0))
+    if not leaf_result:
+        skipped_actions.append({
+            "type": "treat",
+            "part": "leaf",
+            "reason": "No leaf scan result provided"
+        })
+    else:
+        state = leaf_result.get("state")
+        confidence = float(leaf_result.get("confidence", 0.0))
 
         # Case A: healthy -> no action
         if state == "healthy":
             skipped_actions.append({
                 "type": "treat",
-                "part": part_name,
-                "reason": f"{part_name.capitalize()} is healthy: no action needed"
+                "part": "leaf",
+                "reason": "Leaf is healthy: no action needed"
             })
 
-        # Case B: no_plant -> no_plant_found with retry flag (retry once, then skip)
+        # Case B: no_plant / background -> retry once, then skip
         elif state == "no_plant":
             if retry_count == 0:
                 retry_needed = True
                 skipped_actions.append({
                     "type": "no_plant_found",
-                    "part": part_name,
-                    "reason": f"No plant detected on {part_name} scan: retry once"
+                    "part": "leaf",
+                    "reason": "No plant detected on leaf scan: retry once"
                 })
             else:
                 skipped_actions.append({
                     "type": "no_plant_found",
-                    "part": part_name,
-                    "reason": f"No plant detected on {part_name} scan after retry: skipping plant"
+                    "part": "leaf",
+                    "reason": "No plant detected on leaf scan after retry: skipping plant"
                 })
 
         # Case C: diseased -> evaluate confidence
@@ -218,28 +213,21 @@ def evaluate_decision(
             if confidence < low_confidence:
                 skipped_actions.append({
                     "type": "treat",
-                    "part": part_name,
+                    "part": "leaf",
                     "reason": f"Disease confidence ({confidence:.2f}) < low confidence threshold ({low_confidence:.2f}): insufficient confidence to treat"
                 })
             elif low_confidence <= confidence < high_confidence:
                 # Diseased between low and high is unsure and never sprayed
                 skipped_actions.append({
                     "type": "treat",
-                    "part": part_name,
+                    "part": "leaf",
                     "reason": f"Disease confidence ({confidence:.2f}) is in unsure range [{low_confidence:.2f}, {high_confidence:.2f}]: never spray unsure detections"
                 })
             else:
-                # confidence >= high_confidence -> treat!
-                class_key = f"{part_name}_diseased"
-                t_info = treatments.get(class_key, {})
-                treatment_name = t_info.get("treatment", "Targeted Treatment")
-                
-                # Rule: stem marked high severity
-                if part_name == "stem":
-                    severity = "high"
-                else:
-                    severity = t_info.get("severity", "medium")
-
+                # confidence >= high_confidence -> treat leaf!
+                t_info = treatments_map.get("leaf_diseased", {})
+                treatment_name = t_info.get("treatment", "Targeted Leaf Treatment")
+                severity = t_info.get("severity", "medium")
                 base_treat_dose = t_info.get("dose_ml") or default_treat_dose
 
                 # Enforce caps
@@ -250,45 +238,45 @@ def evaluate_decision(
                 if remaining_plant_treat <= 0.0:
                     skipped_actions.append({
                         "type": "treat",
-                        "part": part_name,
+                        "part": "leaf",
                         "reason": f"Per-plant treatment cap ({per_plant_treat_cap:.1f} ml) reached"
                     })
                 elif remaining_run_treat <= 0.0:
                     skipped_actions.append({
                         "type": "treat",
-                        "part": part_name,
+                        "part": "leaf",
                         "reason": f"Per-run treatment cap ({per_run_treat_cap:.1f} ml) reached"
                     })
                 elif treat_dose <= 0.0:
                     skipped_actions.append({
                         "type": "treat",
-                        "part": part_name,
-                        "reason": f"Computed treatment dose for {part_name} is zero due to dose cap constraints"
+                        "part": "leaf",
+                        "reason": "Computed treatment dose for leaf is zero due to dose cap constraints"
                     })
                 elif estop:
                     skipped_actions.append({
                         "type": "treat",
-                        "part": part_name,
+                        "part": "leaf",
                         "reason": "E-stop active: all spraying blocked"
                     })
                 elif battery_low:
                     skipped_actions.append({
                         "type": "treat",
-                        "part": part_name,
+                        "part": "leaf",
                         "reason": "Battery low: all spraying blocked"
                     })
                 elif is_tank_low(tank_estimates, "treatment", treat_dose):
                     skipped_actions.append({
                         "type": "treat",
-                        "part": part_name,
-                        "reason": f"Treatment tank low: insufficient chemical for {part_name} spray"
+                        "part": "leaf",
+                        "reason": "Treatment tank low: insufficient chemical for leaf spray"
                     })
                 else:
                     duration_ms = int((treat_dose / treat_flow_rate) * 1000) if treat_flow_rate > 0 else 0
                     actions.append({
                         "type": "treat",
-                        "part": part_name,
-                        "target": part_name,
+                        "part": "leaf",
+                        "target": "leaf",
                         "treatment": treatment_name,
                         "severity": severity,
                         "dose_ml": round(treat_dose, 2),
@@ -299,18 +287,18 @@ def evaluate_decision(
         else:
             skipped_actions.append({
                 "type": "treat",
-                "part": part_name,
-                "reason": f"Unknown classification state '{state}' for {part_name}"
+                "part": "leaf",
+                "reason": f"Unknown classification state '{state}' for leaf"
             })
 
     # Summary and status
     action_types = [a["type"] for a in actions]
     if "treat" in action_types and "water" in action_types:
         overall_status = "water_and_treat"
-        summary = f"Scheduled watering and treatment ({len(actions)} actions)."
+        summary = f"Scheduled watering and leaf treatment ({len(actions)} actions)."
     elif "treat" in action_types:
         overall_status = "treat_only"
-        summary = f"Scheduled disease treatment ({len(actions)} actions)."
+        summary = f"Scheduled leaf disease treatment ({len(actions)} actions)."
     elif "water" in action_types:
         overall_status = "water_only"
         summary = "Scheduled soil watering."

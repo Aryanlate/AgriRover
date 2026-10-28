@@ -137,7 +137,6 @@ describe('MissionRunner Unit Tests', () => {
     const log = snapshot.plantLogs[0];
     expect(log.plantId).toBe('tomato_1');
     expect(log.leafState).toBe('diseased');
-    expect(log.stemState).toBe('healthy');
     expect(log.waterDispensedMl).toBe(50);
     expect(log.treatDispensedMl).toBe(25);
 
@@ -147,7 +146,8 @@ describe('MissionRunner Unit Tests', () => {
     expect(sent.some((m: RoverOutMessage) => m.c === 'move' && (m as any).mm === 300)).toBe(true);
     expect(sent.some((m: RoverOutMessage) => m.c === 'probe' && (m as any).a === 'read')).toBe(true);
     expect(sent.some((m: RoverOutMessage) => m.c === 'camtilt' && (m as any).pose === 'leaf')).toBe(true);
-    expect(sent.some((m: RoverOutMessage) => m.c === 'camtilt' && (m as any).pose === 'stem')).toBe(true);
+    // Stem pose is not used in leaf-only sequence
+    expect(sent.some((m: RoverOutMessage) => m.c === 'camtilt' && (m as any).pose === 'stem')).toBe(false);
     expect(sent.some((m: RoverOutMessage) => m.c === 'pump' && (m as any).id === 'water')).toBe(true);
     expect(sent.some((m: RoverOutMessage) => m.c === 'pump' && (m as any).id === 'treat')).toBe(true);
     // Return to start
@@ -233,8 +233,8 @@ describe('MissionRunner Unit Tests', () => {
     await runner.start(baseConfig);
 
     expect(decideMock).toHaveBeenCalledTimes(2);
-    // Leaf and stem should be scanned twice each = 4 scan calls
-    expect(scanMock).toHaveBeenCalledTimes(4);
+    // Leaf should be scanned twice (initial + retry) = 2 scan calls in leaf-only mode
+    expect(scanMock).toHaveBeenCalledTimes(2);
 
     const snapshot = runner.getSnapshot();
     expect(snapshot.status).toBe('completed');

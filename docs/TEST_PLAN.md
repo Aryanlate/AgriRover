@@ -89,7 +89,7 @@ A step-by-step verification methodology progressing from isolated bench electric
 ---
 
 ## Stage 5: One Plant With Printed Diseased Leaf (Targeted Spraying)
-**Objective**: Verify dual-pose vision scanning, FastAPI ML classification, decision logic, and targeted foliar spraying.
+**Objective**: Verify leaf vision scanning, FastAPI ML classification, decision logic, and targeted foliar spraying.
 
 1. **Setup**:
    - Attach a printed high-resolution photo of an early-blight diseased leaf to the plant foliage.
@@ -99,7 +99,6 @@ A step-by-step verification methodology progressing from isolated bench electric
    - Rover positions at plant.
    - Camera tilts to `leaf` pose (45°); captures JPEG and posts to `/api/scan`.
    - FastAPI classifier evaluates crop model; returns `leaf_diseased` with confidence >= 0.85.
-   - Camera tilts to `stem` pose (15°); captures JPEG; classifier returns `stem_healthy`.
    - Decision engine evaluates outputs: leaf disease exceeds high confidence threshold.
    - Pan/tilt nozzle aims directly at the leaf coordinates.
    - Treatment pump runs for calibrated duration (e.g. 2.0 s for 20 ml).

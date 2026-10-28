@@ -24,6 +24,7 @@ from app.analysis import (
     check_image_quality,
     compute_spray_preview,
     determine_verdict,
+    get_clean_verdict,
     get_treatment_for_diseased,
 )
 from app.camera_client import camera_client, CameraClientError
@@ -259,6 +260,12 @@ async def save_hard_example(
     Save hard example image to ml/hard_examples/<correct class>/.
     Accepts direct file upload, check_id from checks, or image_id from recent scans.
     """
+    if correct_class not in ["leaf_healthy", "leaf_diseased"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="correct_class must be either 'leaf_healthy' or 'leaf_diseased'."
+        )
+
     target_dir = HARD_EXAMPLES_DIR / correct_class
     target_dir.mkdir(parents=True, exist_ok=True)
 
@@ -342,6 +349,16 @@ async def analyze_image(
             detail=f"Image size ({len(image_bytes) / (1024 * 1024):.1f} MB) exceeds maximum allowed limit of 10 MB."
         )
 
+    # Validate image readability
+    try:
+        with PILImage.open(io.BytesIO(image_bytes)) as test_img:
+            test_img.verify()
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unreadable or corrupted image file. Please provide a valid JPG, JPEG, PNG, or WebP image."
+        )
+
     # 1. Image Quality Checks
     try:
         quality_info = check_image_quality(image_bytes)
@@ -360,6 +377,7 @@ async def analyze_image(
     class_name = class_res["class_name"]
     confidence = float(class_res["confidence"])
     raw_probs = class_res["raw_probabilities"]
+    probs = class_res.get("renormalised_probabilities") or raw_probs
 
     # 3. Read settings for thresholds
     low_thresh = float(_get_setting_val(db, "low_confidence", DEFAULT_SETTINGS["low_confidence"]))
@@ -370,8 +388,8 @@ async def analyze_image(
     merged_settings.update(all_settings)
 
     # 4. Verdict logic
-    verdict = determine_verdict(class_name, confidence, low_threshold=low_thresh, high_threshold=high_thresh)
-    is_low_conf = verdict.endswith("_low_confidence")
+    raw_verdict = determine_verdict(class_name, confidence, low_threshold=low_thresh, high_threshold=high_thresh)
+    verdict, is_low_conf = get_clean_verdict(raw_verdict)
 
     # 5. Spray preview
     spray_preview = compute_spray_preview(
@@ -384,11 +402,11 @@ async def analyze_image(
 
     # 6. Treatment lookup from ml/treatments.json
     treatment_data = None
-    if "diseased" in verdict:
+    if "diseased" in raw_verdict:
         treatment_data = get_treatment_for_diseased()
 
     # 7. Explanation
-    explanation = build_explanation(verdict, quality_info["warnings"])
+    explanation = build_explanation(raw_verdict, quality_info["warnings"])
 
     # 8. Model mode
     model_mode = "mock" if classifier.is_mock else "real"
@@ -411,7 +429,7 @@ async def analyze_image(
             image_path=rel_image_path,
             class_name=class_name,
             confidence=confidence,
-            verdict=verdict,
+            verdict=raw_verdict,
             raw_probabilities=json.dumps(raw_probs),
             would_spray=spray_preview["would_spray"],
             spray_reason=spray_preview["reason"],
@@ -427,9 +445,12 @@ async def analyze_image(
     return AnalyzeResponse(
         class_name=class_name,
         confidence=confidence,
+        probabilities=probs,
         raw_probabilities=raw_probs,
         verdict=verdict,
+        low_confidence=is_low_conf,
         is_low_confidence=is_low_conf,
+        raw_verdict=raw_verdict,
         spray_preview=SprayPreviewInfo(**spray_preview),
         image_quality=ImageQualityInfo(**quality_info),
         model_mode=model_mode,
@@ -457,14 +478,17 @@ def list_recent_checks(db: Session = Depends(get_db)):
         except Exception:
             warns = []
 
+        clean_v, is_low = get_clean_verdict(c.verdict or "unsure")
         results.append(
             CheckItem(
                 id=c.id,
                 image_path=c.image_path,
                 class_name=c.class_name,
                 confidence=c.confidence,
-                verdict=c.verdict,
+                verdict=clean_v,
+                low_confidence=is_low,
                 raw_probabilities=probs,
+                probabilities=probs,
                 would_spray=c.would_spray,
                 spray_reason=c.spray_reason,
                 warnings=warns,

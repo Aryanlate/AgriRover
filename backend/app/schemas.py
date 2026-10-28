@@ -171,9 +171,12 @@ class SprayPreviewInfo(BaseModel):
 class AnalyzeResponse(BaseModel):
     class_name: str
     confidence: float
+    probabilities: Dict[str, float]
     raw_probabilities: Dict[str, float]
     verdict: str
+    low_confidence: bool = False
     is_low_confidence: bool = False
+    raw_verdict: Optional[str] = None
     spray_preview: SprayPreviewInfo
     image_quality: ImageQualityInfo
     model_mode: str
@@ -189,6 +192,8 @@ class CheckItem(BaseModel):
     class_name: str
     confidence: float
     verdict: str
+    low_confidence: bool = False
+    probabilities: Optional[Dict[str, float]] = None
     raw_probabilities: Optional[Dict[str, float]] = None
     would_spray: bool = False
     spray_reason: Optional[str] = None

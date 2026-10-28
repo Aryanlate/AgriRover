@@ -63,6 +63,17 @@ def determine_verdict(
             return "healthy_low_confidence"
 
 
+def get_clean_verdict(verdict_str: str) -> tuple[str, bool]:
+    """
+    Convert internal verdict string to base verdict ('diseased', 'healthy', 'unsure')
+    and a boolean flag indicating if it was low_confidence.
+    """
+    if verdict_str.endswith("_low_confidence"):
+        base = verdict_str.replace("_low_confidence", "")
+        return base, True
+    return verdict_str, False
+
+
 def check_image_quality(image_bytes: bytes) -> Dict[str, Any]:
     """
     Evaluate image quality:

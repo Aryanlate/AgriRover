@@ -4,6 +4,7 @@ import { AppLayout } from './components/layout/AppLayout';
 
 // Pages
 import { DashboardPage } from './pages/DashboardPage';
+import { CheckPage } from './pages/CheckPage';
 import { ManualPage } from './pages/ManualPage';
 import { CameraPage } from './pages/CameraPage';
 import { MissionPage } from './pages/MissionPage';
@@ -26,6 +27,7 @@ export function App() {
           <Route path="/" element={<AppLayout />}>
             <Route index element={<Navigate to="/dashboard" replace />} />
             <Route path="dashboard" element={<DashboardPage />} />
+            <Route path="check" element={<CheckPage />} />
             <Route path="manual" element={<ManualPage />} />
             <Route path="camera" element={<CameraPage />} />
             <Route path="mission" element={<MissionPage />} />

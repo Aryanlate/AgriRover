@@ -102,3 +102,55 @@ export interface AlertItem {
   acknowledged: boolean;
   created_at: string;
 }
+
+export interface ImageQualityInfo {
+  width: number;
+  height: number;
+  brightness: number;
+  blur: number;
+  warnings: string[];
+}
+
+export interface SprayPreviewInfo {
+  would_spray: boolean;
+  reason: string;
+}
+
+export interface AnalyzeResponse {
+  class_name: 'leaf_healthy' | 'leaf_diseased' | string;
+  confidence: number;
+  probabilities: Record<string, number>;
+  raw_probabilities?: Record<string, number>;
+  verdict: 'diseased' | 'healthy' | 'unsure' | string;
+  low_confidence: boolean;
+  is_low_confidence?: boolean;
+  raw_verdict?: string;
+  spray_preview: SprayPreviewInfo;
+  image_quality: ImageQualityInfo;
+  model_mode: 'real' | 'mock' | string;
+  treatment?: {
+    treatment?: string;
+    dose_ml?: number | null;
+    severity?: string;
+    [key: string]: any;
+  } | null;
+  explanation: string;
+  check_id?: number | null;
+  image_path?: string | null;
+}
+
+export interface CheckItem {
+  id: number;
+  image_path: string;
+  class_name: string;
+  confidence: number;
+  verdict: string;
+  low_confidence?: boolean;
+  probabilities?: Record<string, number>;
+  raw_probabilities?: Record<string, number>;
+  would_spray: boolean;
+  spray_reason?: string;
+  warnings: string[];
+  model_mode: string;
+  created_at: string;
+}

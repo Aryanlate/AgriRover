@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Gamepad2, Camera, Target, Bell, Settings } from 'lucide-react';
+import { LayoutDashboard, CheckCircle2, Gamepad2, Camera, Target, Bell, Settings } from 'lucide-react';
 import { useRoverStore } from '../../store/roverStore';
 
 export const BottomNav: React.FC = () => {
@@ -9,6 +9,7 @@ export const BottomNav: React.FC = () => {
 
   const tabs = [
     { to: '/dashboard', label: 'Dash', icon: LayoutDashboard },
+    { to: '/check', label: 'Check it', icon: CheckCircle2 },
     { to: '/manual', label: 'Manual', icon: Gamepad2 },
     { to: '/camera', label: 'Camera', icon: Camera },
     { to: '/mission', label: 'Mission', icon: Target },

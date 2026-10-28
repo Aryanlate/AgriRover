@@ -8,7 +8,7 @@ import io
 import pytest
 from PIL import Image, ImageDraw
 
-from app.analysis import determine_verdict, check_image_quality
+from app.analysis import determine_verdict, get_clean_verdict, check_image_quality
 
 
 # =====================================================================
@@ -19,45 +19,75 @@ def test_verdict_diseased_high_confidence():
     """Predicted diseased at or above high threshold (0.95) -> diseased."""
     verdict = determine_verdict("leaf_diseased", 0.95, low_threshold=0.60, high_threshold=0.95)
     assert verdict == "diseased"
+    clean_v, is_low = get_clean_verdict(verdict)
+    assert clean_v == "diseased"
+    assert is_low is False
 
     verdict_higher = determine_verdict("leaf_diseased", 0.99, low_threshold=0.60, high_threshold=0.95)
     assert verdict_higher == "diseased"
+    clean_vh, is_low_h = get_clean_verdict(verdict_higher)
+    assert clean_vh == "diseased"
+    assert is_low_h is False
 
 
 def test_verdict_diseased_low_confidence():
     """Predicted diseased between low (0.60) and high (0.95) -> diseased_low_confidence."""
     verdict = determine_verdict("leaf_diseased", 0.75, low_threshold=0.60, high_threshold=0.95)
     assert verdict == "diseased_low_confidence"
+    clean_v, is_low = get_clean_verdict(verdict)
+    assert clean_v == "diseased"
+    assert is_low is True
 
     verdict_border = determine_verdict("leaf_diseased", 0.60, low_threshold=0.60, high_threshold=0.95)
     assert verdict_border == "diseased_low_confidence"
+    clean_vb, is_low_b = get_clean_verdict(verdict_border)
+    assert clean_vb == "diseased"
+    assert is_low_b is True
 
 
 def test_verdict_healthy_high_confidence():
     """Predicted healthy at or above high threshold (0.95) -> healthy."""
     verdict = determine_verdict("leaf_healthy", 0.95, low_threshold=0.60, high_threshold=0.95)
     assert verdict == "healthy"
+    clean_v, is_low = get_clean_verdict(verdict)
+    assert clean_v == "healthy"
+    assert is_low is False
 
     verdict_higher = determine_verdict("leaf_healthy", 0.98, low_threshold=0.60, high_threshold=0.95)
     assert verdict_higher == "healthy"
+    clean_vh, is_low_h = get_clean_verdict(verdict_higher)
+    assert clean_vh == "healthy"
+    assert is_low_h is False
 
 
 def test_verdict_healthy_low_confidence():
     """Predicted healthy between low (0.60) and high (0.95) -> healthy_low_confidence."""
     verdict = determine_verdict("leaf_healthy", 0.80, low_threshold=0.60, high_threshold=0.95)
     assert verdict == "healthy_low_confidence"
+    clean_v, is_low = get_clean_verdict(verdict)
+    assert clean_v == "healthy"
+    assert is_low is True
 
     verdict_border = determine_verdict("leaf_healthy", 0.60, low_threshold=0.60, high_threshold=0.95)
     assert verdict_border == "healthy_low_confidence"
+    clean_vb, is_low_b = get_clean_verdict(verdict_border)
+    assert clean_vb == "healthy"
+    assert is_low_b is True
 
 
 def test_verdict_below_low_threshold_is_unsure():
     """Confidence below low threshold (< 0.60) -> unsure for both classes."""
     verdict_diseased = determine_verdict("leaf_diseased", 0.59, low_threshold=0.60, high_threshold=0.95)
     assert verdict_diseased == "unsure"
+    clean_vd, is_low_d = get_clean_verdict(verdict_diseased)
+    assert clean_vd == "unsure"
+    assert is_low_d is False
 
     verdict_healthy = determine_verdict("leaf_healthy", 0.50, low_threshold=0.60, high_threshold=0.95)
     assert verdict_healthy == "unsure"
+    clean_vh, is_low_h = get_clean_verdict(verdict_healthy)
+    assert clean_vh == "unsure"
+    assert is_low_h is False
 
     verdict_low = determine_verdict("leaf_healthy", 0.10, low_threshold=0.60, high_threshold=0.95)
     assert verdict_low == "unsure"

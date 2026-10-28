@@ -4,7 +4,9 @@
 
 import type {
   AlertItem,
+  AnalyzeResponse,
   CalibrationItem,
+  CheckItem,
   DecideResponse,
   Plant,
   PlantHistory,
@@ -243,6 +245,43 @@ class ApiClient {
   async ackAlert(id: number): Promise<AlertItem> {
     return this.request<AlertItem>(`/api/alerts/${id}/ack`, {
       method: 'POST',
+    });
+  }
+
+  // Standalone Check It / Leaf Analysis
+  async analyze(file: File | Blob, save: boolean = false): Promise<AnalyzeResponse> {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (save) {
+      formData.append('save', 'true');
+    }
+
+    const url = `${this.baseUrl}/api/analyze?save=${save ? 'true' : 'false'}`;
+    const response = await fetch(url, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!response.ok) {
+      const errText = await response.text();
+      let msg = errText;
+      try {
+        const json = JSON.parse(errText);
+        msg = json.detail || json.message || errText;
+      } catch {
+        // use raw
+      }
+      throw new Error(`Analyze error (${response.status}): ${msg}`);
+    }
+    return response.json();
+  }
+
+  async listChecks(): Promise<CheckItem[]> {
+    return this.request<CheckItem[]>('/api/checks');
+  }
+
+  async deleteCheck(id: number): Promise<{ ok: boolean; deleted_id: number }> {
+    return this.request<{ ok: boolean; deleted_id: number }>(`/api/checks/${id}`, {
+      method: 'DELETE',
     });
   }
 }

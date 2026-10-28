@@ -4,6 +4,7 @@ import {
   LayoutDashboard,
   Gamepad2,
   Camera,
+  CheckCircle2,
   Target,
   Map,
   CheckSquare,
@@ -29,6 +30,7 @@ export const Sidebar: React.FC = () => {
 
   const navItems: NavItem[] = [
     { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { to: '/check', label: 'Check it', icon: CheckCircle2 },
     { to: '/manual', label: 'Manual Drive', icon: Gamepad2 },
     { to: '/camera', label: 'Camera & Vision', icon: Camera },
     { to: '/mission', label: 'Mission Planner', icon: Target },

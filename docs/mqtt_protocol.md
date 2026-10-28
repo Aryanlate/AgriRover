@@ -110,13 +110,13 @@ The `roverId` and topic prefix are configurable across all components (firmware,
 |---|---|---|---|---|---|---|
 | `agrirover/{id}/cmd` | `web`, `backend` | `rover` | **0** (stop: **1**) | `false` | JSON | Motion, actuator & config commands |
 | `agrirover/{id}/ack` | `rover` | `web`, `backend` | **0** | `false` | JSON | Command confirmation or rejection |
-| `agrirover/{id}/ev` | `rover` | `web`, `backend` | **1** | `false` | JSON | Critical state events (arrived, probe_done) |
+| `agrirover/{id}/ev` | `rover` | `web`, `backend` | **0** | `false` | JSON | Critical state events (arrived, probe_done) |
 | `agrirover/{id}/telemetry` | `rover` | `web`, `backend` | **0** | `false` | JSON | 5 Hz sensor and state broadcast |
-| `agrirover/{id}/status` | `rover` | `web`, `backend` | **1** | `true` | JSON | Connection & system state (LWT online=false) |
+| `agrirover/{id}/status` | `rover` | `web`, `backend` | **0** | `true` | JSON | Connection & system state (LWT online=false) |
 | `agrirover/{id}/cam/cmd` | `web`, `backend` | `cam` | **0** | `false` | JSON | Trigger capture, toggle LED, live feed |
 | `agrirover/{id}/cam/img/{rid}` | `cam` | `web`, `backend` | **0** | `false` | Binary JPEG / Chunks | Single capture photo with request ID |
 | `agrirover/{id}/cam/live` | `cam` | `web` | **0** | `false` | Binary JPEG | Low-framerate live view frames |
-| `agrirover/{id}/cam/status` | `cam` | `web`, `backend` | **1** | `true` | JSON | Camera node online status (LWT online=false) |
+| `agrirover/{id}/cam/status` | `cam` | `web`, `backend` | **0** | `true` | JSON | Camera node online status (LWT online=false) |
 
 > [!IMPORTANT]
 > **Retain & Last Will and Testament (LWT):**
@@ -124,6 +124,19 @@ The `roverId` and topic prefix are configurable across all components (firmware,
 > - Status topics (`status`, `cam/status`) are published with `retain = true`.
 > - Rover LWT: topic `agrirover/{id}/status`, payload `{"online":false,"reason":"lwt"}`, QoS 1, retain `true`.
 > - Camera LWT: topic `agrirover/{id}/cam/status`, payload `{"online":false,"reason":"lwt"}`, QoS 1, retain `true`.
+
+> [!NOTE]
+> **QoS implementation note (ESP32 uplink vs. downlink):**
+> - The main ESP32 and the ESP32-CAM use the `PubSubClient` library, whose `publish()` only
+>   supports **QoS 0**. Therefore **every ESP32 → broker message** (`telemetry`, `ack`, `ev`,
+>   `status`, `cam/live`, `cam/img/*`, `cam/status`) is transmitted at **QoS 0**.
+>   The Last Will is still *registered* in the MQTT `CONNECT` packet at **QoS 1**, and status
+>   topics remain **retained**, so an unexpected disconnect still publishes an accurate
+>   `online=false` to late subscribers.
+> - The **`stop` command** is the one place QoS 1 is enforced end-to-end: `web` publishes
+>   `stop` at **QoS 1**. (`backend` currently does not publish `stop`.)
+> - If QoS 1 uplink for `ev`/`status` is required later, the firmware must switch to an
+>   MQTT client that supports QoS 1 publishing; the stock `PubSubClient` cannot.
 
 ---
 
@@ -261,11 +274,13 @@ To prevent conflicting teleoperation commands from multiple browser tabs or oper
 When a capture command with request ID `rid` is received:
 1. If the LED state was changed, the first camera frame is discarded to allow auto-exposure settling.
 2. The JPEG image is captured in memory.
-3. If payload size is $\le$ 16,384 bytes, it is published directly as a raw binary JPEG payload on:
+3. If the payload is $\le$ 16,384 bytes, it is published directly as a raw binary JPEG payload on:
    `agrirover/{id}/cam/img/{rid}`
-4. If payload size exceeds 16,384 bytes, the image is published in chunks of 16 KB:
-   - Chunk Header: 32 bytes ASCII header followed by raw bytes:
-     `CHUNKV1|{rid}|{chunk_index}|{total_chunks}|` + raw byte slice.
-   - Or individual indexed topic: `agrirover/{id}/cam/img/{rid}/{chunk_index}` with total count indicated in status or metadata.
-   - In both cases, subscribers reassemble chunks by `rid` and verify completion before decoding JPEG.
+4. If the payload exceeds 16,384 bytes, the image is split into 16 KB chunks, each published on the
+   **same** topic `agrirover/{id}/cam/img/{rid}`:
+   - Each chunk is an ASCII header terminated by a newline (`\n`), immediately followed by the raw bytes:
+     `CHUNK|{rid}|{chunk_index}|{total_chunks}|\n` + raw byte slice
+   - `chunk_index` is **0-based**. Subscribers key partial buffers by `rid`, store each chunk by its
+     index, and only decode the JPEG once all `{total_chunks}` chunks have arrived (reassembled in
+     index order). No separate index topic is used.
 

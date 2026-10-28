@@ -174,7 +174,7 @@ bool initCamera() {
 }
 
 // ============================================================================
-// STATUS PUBLISHER (Retained = true, QoS = 1)
+// STATUS PUBLISHER (Retained = true; publish QoS 0, LWT registered at QoS 1)
 // ============================================================================
 void publishStatus(bool online, const String& reason) {
     if (!mqttClient.connected()) return;

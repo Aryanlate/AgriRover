@@ -246,7 +246,7 @@ void MqttTransport::sendEvent(const String& eventName, const String& extraJson) 
         msg += "," + extraJson;
     }
     msg += "}";
-    // Events are QoS 1 per specification
+    // NOTE: PubSubClient::publish() only supports QoS 0, so events go out at QoS 0.
     mqttClient.publish(evTopic.c_str(), (const uint8_t*)msg.c_str(), msg.length(), false);
 }
 
@@ -274,7 +274,8 @@ void MqttTransport::sendStatus(bool online, const String& reason) {
     out += ",\"uptime_s\":" + String(millis() / 1000);
     out += "}";
 
-    // Status is retained = true, QoS 1
+    // Status is retained = true. Publish is QoS 0 (PubSubClient limitation); the LWT is
+    // registered at QoS 1 in the CONNECT packet, so an unclean disconnect is still reliable.
     mqttClient.publish(statusTopic.c_str(), (const uint8_t*)out.c_str(), out.length(), true);
 }
 

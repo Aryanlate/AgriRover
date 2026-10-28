@@ -176,7 +176,8 @@ export const useRoverStore = create<RoverState>((set, get) => {
           },
           lastTelemetryTime: now,
           telemetryHistory: [...state.telemetryHistory.slice(-29), point],
-          mode: msg.mode,
+          // Preserve manual mode if user activated it and rover is just reporting idle
+          mode: (state.mode === 'manual' && msg.mode === 'idle') ? 'manual' : msg.mode,
         }));
       } else if (msg.t === 'ack') {
         const ackData: CommandAck = {
@@ -290,6 +291,13 @@ export const useRoverStore = create<RoverState>((set, get) => {
         connectionStatus: 'disconnected',
         connectionError: null,
       });
+
+      // Auto-connect when user switches to Mock simulator so they aren't stuck offline
+      if (type === 'mock') {
+        newTransport.connect().catch((e) => {
+          console.warn('Mock connect error:', e);
+        });
+      }
     },
 
     connect: async () => {

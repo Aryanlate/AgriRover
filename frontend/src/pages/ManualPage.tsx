@@ -35,6 +35,8 @@ interface ToastItem {
 export const ManualPage: React.FC = () => {
   const {
     connectionStatus,
+    connect,
+    setTransportType,
     telemetry,
     send,
     mode,
@@ -136,6 +138,13 @@ export const ManualPage: React.FC = () => {
     }, 300);
     return () => clearInterval(hbTimer);
   }, [send]);
+
+  // Auto-switch to manual mode when connected on the Manual page
+  useEffect(() => {
+    if (connectionStatus === 'connected' && mode === 'idle') {
+      setMode('manual');
+    }
+  }, [connectionStatus, mode, setMode]);
 
   // 3. Drive logic: 5 Hz press-and-hold
   const stopDriving = useCallback(() => {
@@ -377,11 +386,32 @@ export const ManualPage: React.FC = () => {
           </p>
         </div>
 
-        {!isAutoRunning && mode !== 'manual' && (
-          <Button variant="secondary" onClick={() => setMode('manual')} icon={<Zap className="w-4 h-4" />}>
-            Activate Manual Mode
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          {mode === 'manual' && (
+            <span className="px-3 py-1.5 rounded-xl bg-primary/20 text-primary border border-primary/40 text-xs font-bold uppercase tracking-wide">
+              Manual Mode Active
+            </span>
+          )}
+
+          {!isAutoRunning && mode !== 'manual' && (
+            <Button
+              variant="primary"
+              onClick={async () => {
+                if (isDisconnected) {
+                  try {
+                    await connect();
+                  } catch {
+                    return;
+                  }
+                }
+                await setMode('manual');
+              }}
+              icon={<Zap className="w-4 h-4" />}
+            >
+              Activate Manual Mode
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* 1. Auto Mode Running Banner with Pause Button */}
@@ -445,7 +475,7 @@ export const ManualPage: React.FC = () => {
                 </h3>
                 <p className="text-sm text-text-muted mt-0.5">
                   {isDisconnected
-                    ? 'Bluetooth link disconnected. Reconnect via top bar to regain manual teleoperation.'
+                    ? 'Bluetooth link disconnected. Reconnect to send drive and actuator commands.'
                     : isEstop
                     ? 'Emergency Stop is active. Disengage hardware switch and reset E-stop to resume control.'
                     : isFault
@@ -456,6 +486,27 @@ export const ManualPage: React.FC = () => {
                 </p>
               </div>
             </div>
+
+            {isDisconnected && (
+              <div className="flex flex-wrap items-center gap-2.5 flex-shrink-0">
+                <Button
+                  variant="primary"
+                  size="md"
+                  onClick={() => connect()}
+                  icon={<Zap className="w-4 h-4" />}
+                >
+                  Connect Bluetooth
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="md"
+                  onClick={() => setTransportType('mock')}
+                >
+                  Use Mock Simulator
+                </Button>
+              </div>
+            )}
+
             {isEstop && (
               <Button
                 variant="secondary"

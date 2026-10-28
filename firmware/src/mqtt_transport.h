@@ -1,8 +1,14 @@
 #pragma once
+#include <functional>
 #include "transport.h"
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
-#include <PubSubClient.h>
+
+#if __has_include("PubSubClient.h")
+    #include "PubSubClient.h"
+#else
+    #include <PubSubClient.h>
+#endif
 
 class MqttTransport : public ITransport {
 public:
@@ -53,6 +59,6 @@ private:
     void setupTopics();
     void maintainWifi();
     void maintainMqtt();
-    void onMqttMessage(char* topic, byte* payload, unsigned int length);
+    void onMqttMessage(char* topic, uint8_t* payload, unsigned int length);
 };
 

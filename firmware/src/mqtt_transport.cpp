@@ -27,6 +27,14 @@
 #define ROVER_ID "rover01"
 #endif
 
+static MqttTransport* s_mqttInstance = nullptr;
+
+static void s_mqttCallbackTrampoline(char* topic, uint8_t* payload, unsigned int length) {
+    if (s_mqttInstance != nullptr) {
+        s_mqttInstance->onMqttMessage(topic, payload, length);
+    }
+}
+
 MqttTransport::MqttTransport()
     : mqttClient(wifiClient) {
 }
@@ -42,6 +50,7 @@ void MqttTransport::setupTopics() {
 
 void MqttTransport::init(TransportMessageCb onMsg) {
     messageCallback = onMsg;
+    s_mqttInstance = this;
     setupTopics();
 
     // 1. Configure WiFi
@@ -55,11 +64,7 @@ void MqttTransport::init(TransportMessageCb onMsg) {
     mqttClient.setServer(MQTT_BROKER, MQTT_PORT);
     mqttClient.setKeepAlive(5);       // 5 seconds keepalive per specification
     mqttClient.setBufferSize(1024);   // 1024 bytes buffer for JSON payloads
-
-    // Lambda trampoline to member callback
-    mqttClient.setCallback([this](char* topic, byte* payload, unsigned int length) {
-        this->onMqttMessage(topic, payload, length);
-    });
+    mqttClient.setCallback(s_mqttCallbackTrampoline);
 
     Serial.println("\n[MQTT Transport] Initialized with TLS port 8883.");
     Serial.printf("[MQTT Transport] Broker: %s | User: %s | Rover ID: %s\n", MQTT_BROKER, MQTT_USER, ROVER_ID);
@@ -69,7 +74,7 @@ void MqttTransport::init(TransportMessageCb onMsg) {
     lastWifiAttemptMs = millis();
 }
 
-void MqttTransport::onMqttMessage(char* topic, byte* payload, unsigned int length) {
+void MqttTransport::onMqttMessage(char* topic, uint8_t* payload, unsigned int length) {
     if (length == 0 || messageCallback == nullptr) return;
 
     // Convert raw MQTT byte payload to Arduino String safely
@@ -93,7 +98,7 @@ void MqttTransport::maintainWifi() {
             wifiBackoffMs = 2000;
             Serial.println("\n[WIFI] Connected successfully!");
             Serial.printf("[WIFI] IP Address: %s\n", WiFi.localIP().toString().c_str());
-            Serial.printf("[WIFI] RSSI: %d dBm | Channel: %d\n", WiFi.RSSI(), WiFi.channel());
+            Serial.printf("[WIFI] RSSI: %d dBm\n", WiFi.RSSI());
         }
     } else {
         if (wasWifiConnected) {

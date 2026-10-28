@@ -54,6 +54,8 @@ def run_split(train_ratio: float = 0.70, val_ratio: float = 0.15, test_ratio: fl
             cls_target.mkdir(parents=True, exist_ok=True)
 
     split_counts = {"train": {}, "val": {}, "test": {}}
+    seen_hashes = {}
+    total_duplicates = 0
 
     for cls in TARGET_CLASSES:
         cls_staging = STAGING_DIR / cls
@@ -64,7 +66,6 @@ def run_split(train_ratio: float = 0.70, val_ratio: float = 0.15, test_ratio: fl
         raw_files = [p for p in cls_staging.iterdir() if p.is_file() and p.suffix.lower() in VALID_EXTENSIONS]
 
         # 1. Deduplicate by MD5 hash
-        seen_hashes = {}
         unique_files = []
         duplicates_count = 0
 
@@ -72,8 +73,9 @@ def run_split(train_ratio: float = 0.70, val_ratio: float = 0.15, test_ratio: fl
             file_hash = compute_md5(f)
             if file_hash in seen_hashes:
                 duplicates_count += 1
+                total_duplicates += 1
             else:
-                seen_hashes[file_hash] = f
+                seen_hashes[file_hash] = (cls, f)
                 unique_files.append(f)
 
         print(f"Class '{cls}': {len(raw_files)} files -> {duplicates_count} duplicates removed -> {len(unique_files)} unique images.")

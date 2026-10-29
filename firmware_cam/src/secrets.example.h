@@ -15,5 +15,6 @@
 #define ROVER_ID        "rover01"
 
 // Supabase Configuration for direct image upload
-#define SUPABASE_URL    "https://dpdvijdxupwcqlyspzzi.supabase.co/functions/v1/upload-plant-image"
-#define SUPABASE_KEY    "sb_publishable_h9y6UjJykFAkr3o8mDHLKQ_UlVeSUM_"
+#define SUPABASE_URL        "https://dpdvijdxupwcqlyspzzi.supabase.co/functions/v1/upload-plant-image"
+// Must exactly match the Edge Function secret CAMERA_UPLOAD_TOKEN
+#define CAMERA_UPLOAD_TOKEN "YOUR_CAMERA_UPLOAD_TOKEN"

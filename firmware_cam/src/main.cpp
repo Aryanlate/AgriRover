@@ -51,8 +51,10 @@
 #ifndef SUPABASE_URL
 #define SUPABASE_URL    "https://dpdvijdxupwcqlyspzzi.supabase.co/functions/v1/upload-plant-image"
 #endif
-#ifndef SUPABASE_KEY
-#define SUPABASE_KEY    "sb_publishable_h9y6UjJykFAkr3o8mDHLKQ_UlVeSUM_"
+// Shared secret that must match the Edge Function's CAMERA_UPLOAD_TOKEN env var.
+// Put the real value in secrets.h; never commit it.
+#ifndef CAMERA_UPLOAD_TOKEN
+#define CAMERA_UPLOAD_TOKEN "YOUR_CAMERA_UPLOAD_TOKEN"
 #endif
 
 // Autonomous Supabase upload: the cam captures and uploads on its own timer,
@@ -300,11 +302,12 @@ void captureAndPublish(const String& rid) {
 }
 
 // ============================================================================
-// SUPABASE DIRECT UPLOAD (HTTPS POST Multipart)
+// SUPABASE DIRECT UPLOAD (HTTPS POST raw JPEG)
 // ============================================================================
 void uploadToSupabase(camera_fb_t* fb, const String& rid) {
     if (WiFi.status() != WL_CONNECTED) return;
 
+    (void)rid; // Filename is generated server-side by the Edge Function.
     Serial.println("[SUPABASE] Starting direct cloud upload...");
     
     WiFiClientSecure httpsClient;
@@ -315,25 +318,16 @@ void uploadToSupabase(camera_fb_t* fb, const String& rid) {
         return;
     }
 
-    String boundary = "----AgriRoverBoundary" + String(millis(), HEX);
-    String head = "--" + boundary + "\r\n";
-    head += "Content-Disposition: form-data; name=\"file\"; filename=\"" + rid + ".jpg\"\r\n";
-    head += "Content-Type: image/jpeg\r\n\r\n";
-    String tail = "\r\n--" + boundary + "--\r\n";
-
-    uint32_t totalLen = head.length() + fb->len + tail.length();
-
+    // The Edge Function expects a RAW JPEG body (not multipart/form-data)
+    // and authenticates via the x-camera-token header.
     httpsClient.print("POST /functions/v1/upload-plant-image HTTP/1.1\r\n");
     httpsClient.print("Host: dpdvijdxupwcqlyspzzi.supabase.co\r\n");
-    httpsClient.print("Authorization: Bearer " + String(SUPABASE_KEY) + "\r\n");
-    httpsClient.print("apikey: " + String(SUPABASE_KEY) + "\r\n");
-    httpsClient.print("Content-Type: multipart/form-data; boundary=" + boundary + "\r\n");
-    httpsClient.print("Content-Length: " + String(totalLen) + "\r\n");
+    httpsClient.print("x-camera-token: " + String(CAMERA_UPLOAD_TOKEN) + "\r\n");
+    httpsClient.print("Content-Type: image/jpeg\r\n");
+    httpsClient.print("Content-Length: " + String(fb->len) + "\r\n");
     httpsClient.print("Connection: close\r\n\r\n");
 
-    httpsClient.print(head);
-    
-    // Write image bytes in small slices to avoid buffering issues
+    // Stream the raw JPEG bytes in small slices to avoid buffering issues
     size_t offset = 0;
     while (offset < fb->len) {
         size_t toWrite = (fb->len - offset > 2048) ? 2048 : (fb->len - offset);
@@ -341,8 +335,6 @@ void uploadToSupabase(camera_fb_t* fb, const String& rid) {
         offset += toWrite;
         yield();
     }
-    
-    httpsClient.print(tail);
 
     // Read the status line so upload failures are visible on the serial monitor
     unsigned long timeout = millis();

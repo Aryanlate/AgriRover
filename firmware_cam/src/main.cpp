@@ -55,6 +55,15 @@
 #define SUPABASE_KEY    "sb_publishable_h9y6UjJykFAkr3o8mDHLKQ_UlVeSUM_"
 #endif
 
+// Autonomous Supabase upload: the cam captures and uploads on its own timer,
+// so images reach the website through Supabase without needing MQTT up.
+#ifndef ENABLE_SUPABASE_AUTO_UPLOAD
+#define ENABLE_SUPABASE_AUTO_UPLOAD 1
+#endif
+#ifndef SUPABASE_UPLOAD_INTERVAL_MS
+#define SUPABASE_UPLOAD_INTERVAL_MS 10000UL
+#endif
+
 // Debug HTTP WebServer Switch (set to 0 for production, 1 for local debug)
 #define ENABLE_HTTP_DEBUG 1
 
@@ -90,6 +99,7 @@ static WebServer debugServer(80);
 static volatile int ledState = 0;
 static volatile bool ledChanged = false;
 static unsigned long lastCaptureMs = 0;
+static unsigned long lastSupabaseUploadMs = 0;
 
 // Live streaming state
 static bool liveStreaming = false;
@@ -122,6 +132,7 @@ void publishStatus(bool online, const String& reason = "");
 void handleCamCommand(const String& payload);
 void captureAndPublish(const String& rid);
 void uploadToSupabase(camera_fb_t* fb, const String& rid);
+void captureAndUploadSupabase();
 void publishLiveFrame();
 void onMqttMessage(char* topic, uint8_t* payload, unsigned int length);
 
@@ -333,18 +344,44 @@ void uploadToSupabase(camera_fb_t* fb, const String& rid) {
     
     httpsClient.print(tail);
 
-    // Read response (simple check)
+    // Read the status line so upload failures are visible on the serial monitor
     unsigned long timeout = millis();
-    while (httpsClient.connected() && millis() - timeout < 5000) {
+    bool statusLogged = false;
+    while (httpsClient.connected() && millis() - timeout < 3000) {
         if (httpsClient.available()) {
             String line = httpsClient.readStringUntil('\n');
-            if (line.startsWith("HTTP/1.1 200")) {
-                Serial.println("[SUPABASE] Upload successful!");
+            if (!statusLogged && line.startsWith("HTTP/1.")) {
+                statusLogged = true;
+                if (line.indexOf(" 200") > 0) {
+                    Serial.println("[SUPABASE] Upload successful (HTTP 200).");
+                } else {
+                    Serial.printf("[SUPABASE ERROR] Server replied: %s\n", line.c_str());
+                }
             }
             if (line.length() == 0) break;
         }
+        yield();
     }
     httpsClient.stop();
+}
+
+// ============================================================================
+// AUTONOMOUS SUPABASE CAPTURE (MQTT-independent image path)
+// Captures a frame and pushes it straight to Supabase on a timer, so the
+// website receives images even when the MQTT link is down.
+// ============================================================================
+void captureAndUploadSupabase() {
+    if (WiFi.status() != WL_CONNECTED) return;
+
+    camera_fb_t* fb = esp_camera_fb_get();
+    if (!fb) {
+        Serial.println("[SUPABASE ERROR] Frame capture failed.");
+        return;
+    }
+
+    String rid = "auto_" + String(millis());
+    uploadToSupabase(fb, rid);
+    esp_camera_fb_return(fb);
 }
 
 // ============================================================================
@@ -610,6 +647,9 @@ void setup() {
     WiFi.begin(WIFI_SSID, WIFI_PASS);
     lastWifiAttemptMs = millis();
 
+    // Start the autonomous Supabase upload timer
+    lastSupabaseUploadMs = millis();
+
 #if ENABLE_HTTP_DEBUG
     setupDebugHttp();
 #endif
@@ -649,6 +689,14 @@ void loop() {
 
 #if ENABLE_HTTP_DEBUG
     debugServer.handleClient();
+#endif
+
+    // 4. Autonomous Supabase upload (MQTT-independent image path)
+#if ENABLE_SUPABASE_UPLOAD && ENABLE_SUPABASE_AUTO_UPLOAD
+    if (millis() - lastSupabaseUploadMs >= SUPABASE_UPLOAD_INTERVAL_MS) {
+        lastSupabaseUploadMs = millis();
+        captureAndUploadSupabase();
+    }
 #endif
 
     yield();

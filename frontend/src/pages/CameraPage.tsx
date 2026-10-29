@@ -54,7 +54,12 @@ export const CameraPage: React.FC = () => {
   const [photoError, setPhotoError] = useState<string | null>(null);
 
   // Supabase Cloud Images
-  const { images: cloudImages, loading: loadingCloud } = usePlantImages(5);
+  const {
+    images: cloudImages,
+    loading: loadingCloud,
+    error: cloudError,
+    refresh: refreshCloud,
+  } = usePlantImages(5);
   const [processingCloudId, setProcessingCloudId] = useState<string | null>(null);
 
   const isMqttMode = transportType === 'mqtt';
@@ -499,13 +504,31 @@ export const CameraPage: React.FC = () => {
             <Cloud className="w-5 h-5 text-primary" />
             <h3 className="font-bold text-sm uppercase tracking-wider">Cloud Captures (Supabase)</h3>
           </div>
-          {loadingCloud && <RefreshCw className="w-4 h-4 animate-spin text-text-muted" />}
+          <div className="flex items-center gap-2">
+            {loadingCloud && <RefreshCw className="w-4 h-4 animate-spin text-text-muted" />}
+            <button
+              onClick={refreshCloud}
+              disabled={loadingCloud}
+              aria-label="Refresh cloud captures"
+              className="p-2 rounded-lg border border-border text-text-muted hover:text-text-main hover:bg-app transition-colors disabled:opacity-50"
+            >
+              <RefreshCw className="w-4 h-4" />
+            </button>
+          </div>
         </div>
+
+        {cloudError && (
+          <div role="alert" className="p-3 rounded-xl border-2 border-danger bg-danger/10 text-danger text-xs">
+            Supabase error: {cloudError}
+          </div>
+        )}
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {cloudImages.length === 0 && !loadingCloud ? (
             <div className="sm:col-span-2 lg:col-span-3 py-8 text-center bg-surface rounded-2xl border-2 border-dashed border-border">
-              <p className="text-xs text-text-muted">No cloud images found. Flashing the cam will upload here.</p>
+              <p className="text-xs text-text-muted">
+                No cloud images found. The ESP32-CAM uploads here automatically every 30s.
+              </p>
             </div>
           ) : (
             cloudImages.map((img) => (

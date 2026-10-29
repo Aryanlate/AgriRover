@@ -3,7 +3,7 @@
  * Fetches the latest rows and then listens for new INSERTs via Realtime.
  */
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { supabase } from './client';
 
 const PLANT_IMAGES_TABLE = 'plant_images';
@@ -19,33 +19,34 @@ export interface PlantImage {
 export function usePlantImages(limit = 10) {
   const [images, setImages] = useState<PlantImage[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data, error: fetchError } = await supabase
+        .from(PLANT_IMAGES_TABLE)
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+      if (fetchError) {
+        setError(fetchError.message);
+        console.warn('Supabase fetch failed:', fetchError.message);
+      } else {
+        setError(null);
+        setImages((data as PlantImage[]) ?? []);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Supabase unreachable');
+      console.warn('Supabase unreachable:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, [limit]);
 
   useEffect(() => {
-    let cancelled = false;
-
-    const fetchImages = async () => {
-      try {
-        const { data, error } = await supabase
-          .from(PLANT_IMAGES_TABLE)
-          .select('*')
-          .order('created_at', { ascending: false })
-          .limit(limit);
-
-        if (!cancelled) {
-          if (error) {
-            console.warn('Supabase fetch failed:', error.message);
-          } else if (data) {
-            setImages(data as PlantImage[]);
-          }
-        }
-      } catch (err) {
-        console.warn('Supabase unreachable:', err);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-
-    fetchImages();
+    refresh();
 
     const channel = supabase
       .channel('plant_images_realtime')
@@ -61,10 +62,9 @@ export function usePlantImages(limit = 10) {
       .subscribe();
 
     return () => {
-      cancelled = true;
       supabase.removeChannel(channel);
     };
-  }, [limit]);
+  }, [limit, refresh]);
 
-  return { images, loading };
+  return { images, loading, error, refresh };
 }

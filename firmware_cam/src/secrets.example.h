@@ -13,3 +13,7 @@
 #define MQTT_PASS       "YOUR_CAM_PASSWORD"
 
 #define ROVER_ID        "rover01"
+
+// Supabase Configuration for direct image upload
+#define SUPABASE_URL    "https://dpdvijdxupwcqlyspzzi.supabase.co/functions/v1/upload-plant-image"
+#define SUPABASE_KEY    "sb_publishable_h9y6UjJykFAkr3o8mDHLKQ_UlVeSUM_"

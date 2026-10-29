@@ -32,9 +32,13 @@ public:
         onDisconnectCb = cb;
     }
 
+    // Invoked by the static PubSubClient callback trampoline.
+    void onMqttMessage(char* topic, uint8_t* payload, unsigned int length);
+
 private:
     WiFiClientSecure wifiClient;
-    PubSubClient mqttClient;
+    // mutable so isConnected() (const) can query the non-const PubSubClient.
+    mutable PubSubClient mqttClient;
     TransportMessageCb messageCallback = nullptr;
     std::function<void(const String&)> onDisconnectCb = nullptr;
 
@@ -59,6 +63,5 @@ private:
     void setupTopics();
     void maintainWifi();
     void maintainMqtt();
-    void onMqttMessage(char* topic, uint8_t* payload, unsigned int length);
 };
 

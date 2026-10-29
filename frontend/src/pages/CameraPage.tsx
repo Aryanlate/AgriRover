@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   Camera,
   CheckCircle2,
+  Cloud,
   FolderPlus,
   HelpCircle,
   Lightbulb,
@@ -22,6 +23,7 @@ import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { EmptyState } from '../components/ui/EmptyState';
 import { apiClient } from '../services/api/client';
+import { usePlantImages } from '../services/supabase/usePlantImages';
 import type { ScanResponse } from '../services/api/types';
 
 type CameraTab = 'live' | 'check' | 'dataset';
@@ -50,6 +52,10 @@ export const CameraPage: React.FC = () => {
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const photoUrlRef = useRef<string | null>(null);
   const [photoError, setPhotoError] = useState<string | null>(null);
+
+  // Supabase Cloud Images
+  const { images: cloudImages, loading: loadingCloud } = usePlantImages(5);
+  const [processingCloudId, setProcessingCloudId] = useState<string | null>(null);
 
   const isMqttMode = transportType === 'mqtt';
   const cameraOnline = isMqttMode && Boolean(mqttDetails?.cameraOnline);
@@ -235,6 +241,35 @@ export const CameraPage: React.FC = () => {
         return cur;
       });
     }, 5000);
+  };
+
+  const handleProcessCloudImage = async (imageUrl: string, id: string) => {
+    setProcessingCloudId(id);
+    setScanError(null);
+    setScanning(true);
+    try {
+      // 1. Fetch image from Supabase Storage
+      const response = await fetch(imageUrl);
+      const blob = await response.blob();
+      
+      // 2. Run ML Prediction
+      const res = await apiClient.predict(blob, checkPose);
+      
+      // 3. Map to ScanResponse for UI consistency (image_path is an absolute URL here)
+      setScanResult({
+        ok: true,
+        result: res,
+        image_path: imageUrl,
+      });
+
+      setActiveTab('check');
+    } catch (err) {
+      setScanError('Failed to process cloud image');
+      console.error(err);
+    } finally {
+      setProcessingCloudId(null);
+      setScanning(false);
+    }
   };
 
   // Set camera pose
@@ -457,6 +492,48 @@ export const CameraPage: React.FC = () => {
         </div>
       )}
 
+      {/* Cloud Images Feed */}
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Cloud className="w-5 h-5 text-primary" />
+            <h3 className="font-bold text-sm uppercase tracking-wider">Cloud Captures (Supabase)</h3>
+          </div>
+          {loadingCloud && <RefreshCw className="w-4 h-4 animate-spin text-text-muted" />}
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {cloudImages.length === 0 && !loadingCloud ? (
+            <div className="sm:col-span-2 lg:col-span-3 py-8 text-center bg-surface rounded-2xl border-2 border-dashed border-border">
+              <p className="text-xs text-text-muted">No cloud images found. Flashing the cam will upload here.</p>
+            </div>
+          ) : (
+            cloudImages.map((img) => (
+              <Card key={img.id} className="overflow-hidden group border-border hover:border-primary/50 transition-colors p-0">
+                <div className="aspect-video relative bg-app">
+                  <img src={img.image_url} alt="Cloud capture" className="w-full h-full object-cover" />
+                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                    <Button
+                      variant="primary"
+                      className="h-8 text-[10px]"
+                      onClick={() => handleProcessCloudImage(img.image_url, img.id)}
+                      disabled={scanning}
+                    >
+                      {processingCloudId === img.id ? <RefreshCw className="w-3 h-3 animate-spin mr-1" /> : <RefreshCw className="w-3 h-3 mr-1" />}
+                      Process ML
+                    </Button>
+                  </div>
+                </div>
+                <div className="p-2 flex items-center justify-between text-[10px] text-text-muted font-mono bg-surface">
+                  <span>{new Date(img.created_at).toLocaleTimeString()}</span>
+                  <span className="bg-primary/10 text-primary px-1.5 py-0.5 rounded uppercase font-bold">{img.pose || 'AUTO'}</span>
+                </div>
+              </Card>
+            ))
+          )}
+        </div>
+      </div>
+
       {/* ========================================================================= */}
       {/* TAB 1: LIVE STREAM & CONTROLS */}
       {/* ========================================================================= */}
@@ -670,7 +747,11 @@ export const CameraPage: React.FC = () => {
                 <div className="space-y-3">
                   <div className="overflow-hidden rounded-2xl border-2 border-border bg-app aspect-video flex items-center justify-center">
                     <img
-                      src={`http://localhost:8000${scanResult.image_path}`}
+                      src={
+                        scanResult.image_path.startsWith('http')
+                          ? scanResult.image_path
+                          : `http://localhost:8000${scanResult.image_path}`
+                      }
                       alt="Scanned crop inspection"
                       className="w-full h-full object-cover"
                     />

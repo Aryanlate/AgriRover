@@ -83,6 +83,12 @@
 #define MQTT_CALLBACK_SIGNATURE void (*callback)(char*, uint8_t*, unsigned int)
 #endif
 
+// Maximum size of the MQTT fixed header: 1 byte packet type +
+// up to 4 bytes of variable-length "remaining length".
+#ifndef MQTT_MAX_HEADER_SIZE
+#define MQTT_MAX_HEADER_SIZE 5
+#endif
+
 #define CHECK_STRING_LENGTH(l,s) if (l+2+strnlen(s, this->bufferSize) > this->bufferSize) {_client->stop();return false;}
 
 class PubSubClient : public Print {
@@ -123,6 +129,7 @@ public:
 
    ~PubSubClient();
 
+   PubSubClient& setServer(uint8_t * ip, uint16_t port);
    PubSubClient& setServer(IPAddress ip, uint16_t port);
    PubSubClient& setServer(const char * domain, uint16_t port);
    PubSubClient& setCallback(MQTT_CALLBACK_SIGNATURE);

@@ -43,6 +43,18 @@
 #define ROVER_ID        "rover01"
 #endif
 
+// Supabase upload switch (set to 1 to enable)
+#ifndef ENABLE_SUPABASE_UPLOAD
+#define ENABLE_SUPABASE_UPLOAD 1
+#endif
+
+#ifndef SUPABASE_URL
+#define SUPABASE_URL    "https://dpdvijdxupwcqlyspzzi.supabase.co/functions/v1/upload-plant-image"
+#endif
+#ifndef SUPABASE_KEY
+#define SUPABASE_KEY    "sb_publishable_h9y6UjJykFAkr3o8mDHLKQ_UlVeSUM_"
+#endif
+
 // Debug HTTP WebServer Switch (set to 0 for production, 1 for local debug)
 #define ENABLE_HTTP_DEBUG 1
 
@@ -109,6 +121,7 @@ void maintainMqtt();
 void publishStatus(bool online, const String& reason = "");
 void handleCamCommand(const String& payload);
 void captureAndPublish(const String& rid);
+void uploadToSupabase(camera_fb_t* fb, const String& rid);
 void publishLiveFrame();
 void onMqttMessage(char* topic, uint8_t* payload, unsigned int length);
 
@@ -268,7 +281,70 @@ void captureAndPublish(const String& rid) {
         }
     }
 
+#if ENABLE_SUPABASE_UPLOAD
+    uploadToSupabase(fb, rid);
+#endif
+
     esp_camera_fb_return(fb);
+}
+
+// ============================================================================
+// SUPABASE DIRECT UPLOAD (HTTPS POST Multipart)
+// ============================================================================
+void uploadToSupabase(camera_fb_t* fb, const String& rid) {
+    if (WiFi.status() != WL_CONNECTED) return;
+
+    Serial.println("[SUPABASE] Starting direct cloud upload...");
+    
+    WiFiClientSecure httpsClient;
+    httpsClient.setInsecure(); // Bypass cert verification for simplicity
+
+    if (!httpsClient.connect("dpdvijdxupwcqlyspzzi.supabase.co", 443)) {
+        Serial.println("[SUPABASE ERROR] Connection failed!");
+        return;
+    }
+
+    String boundary = "----AgriRoverBoundary" + String(millis(), HEX);
+    String head = "--" + boundary + "\r\n";
+    head += "Content-Disposition: form-data; name=\"file\"; filename=\"" + rid + ".jpg\"\r\n";
+    head += "Content-Type: image/jpeg\r\n\r\n";
+    String tail = "\r\n--" + boundary + "--\r\n";
+
+    uint32_t totalLen = head.length() + fb->len + tail.length();
+
+    httpsClient.print("POST /functions/v1/upload-plant-image HTTP/1.1\r\n");
+    httpsClient.print("Host: dpdvijdxupwcqlyspzzi.supabase.co\r\n");
+    httpsClient.print("Authorization: Bearer " + String(SUPABASE_KEY) + "\r\n");
+    httpsClient.print("apikey: " + String(SUPABASE_KEY) + "\r\n");
+    httpsClient.print("Content-Type: multipart/form-data; boundary=" + boundary + "\r\n");
+    httpsClient.print("Content-Length: " + String(totalLen) + "\r\n");
+    httpsClient.print("Connection: close\r\n\r\n");
+
+    httpsClient.print(head);
+    
+    // Write image bytes in small slices to avoid buffering issues
+    size_t offset = 0;
+    while (offset < fb->len) {
+        size_t toWrite = (fb->len - offset > 2048) ? 2048 : (fb->len - offset);
+        httpsClient.write(fb->buf + offset, toWrite);
+        offset += toWrite;
+        yield();
+    }
+    
+    httpsClient.print(tail);
+
+    // Read response (simple check)
+    unsigned long timeout = millis();
+    while (httpsClient.connected() && millis() - timeout < 5000) {
+        if (httpsClient.available()) {
+            String line = httpsClient.readStringUntil('\n');
+            if (line.startsWith("HTTP/1.1 200")) {
+                Serial.println("[SUPABASE] Upload successful!");
+            }
+            if (line.length() == 0) break;
+        }
+    }
+    httpsClient.stop();
 }
 
 // ============================================================================
